@@ -108,12 +108,19 @@ final class SshConnection implements RemoteConnection {
     static SshConnection connect(Profile profile, String secret, byte[] privateKey,
             File hostPins, HostKeyApproval approval, SocketFactory sockets, Runnable closeRoute,
             int connectTimeoutMs) throws IOException, JSchException {
+        return connect(profile, secret, privateKey, hostPins, approval, sockets, closeRoute,
+                connectTimeoutMs, null);
+    }
+
+    static SshConnection connect(Profile profile, String secret, byte[] privateKey,
+            File hostPins, HostKeyApproval approval, SocketFactory sockets, Runnable closeRoute,
+            int connectTimeoutMs, Runnable hostVerified) throws IOException, JSchException {
         try {
             if (privateKey != null && (privateKey.length == 0 || privateKey.length > MAX_PRIVATE_KEY_BYTES)) {
                 throw new IOException("Choose a private key file no larger than 64 KiB.");
             }
             return establish(profile, secret, privateKey, hostPins, approval, sockets, closeRoute,
-                    connectTimeoutMs);
+                    connectTimeoutMs, hostVerified);
         } finally {
             if (privateKey != null) Arrays.fill(privateKey, (byte) 0);
         }
@@ -121,9 +128,9 @@ final class SshConnection implements RemoteConnection {
 
     private static SshConnection establish(Profile profile, String secret, byte[] privateKey,
             File hostPins, HostKeyApproval approval, SocketFactory sockets, Runnable closeRoute,
-            int connectTimeoutMs) throws IOException, JSchException {
+            int connectTimeoutMs, Runnable hostVerified) throws IOException, JSchException {
         requireNotInterrupted();
-        HostPins pins = new HostPins(profile.endpoint(), hostPins, approval);
+        HostPins pins = new HostPins(profile.endpoint(), hostPins, approval, hostVerified);
         JSch jsch = new JSch();
         jsch.setHostKeyRepository(pins);
         Session session = jsch.getSession(profile.username, profile.host, profile.port);
@@ -493,12 +500,14 @@ final class SshConnection implements RemoteConnection {
         private final String endpoint;
         private final File file;
         private final HostKeyApproval approval;
+        private final Runnable hostVerified;
         private IOException failure;
 
-        private HostPins(String endpoint, File file, HostKeyApproval approval) {
+        private HostPins(String endpoint, File file, HostKeyApproval approval, Runnable hostVerified) {
             this.endpoint = endpoint;
             this.file = file;
             this.approval = approval;
+            this.hostVerified = hostVerified;
         }
 
         String negotiatedHostAlgorithms() throws IOException {
@@ -529,7 +538,7 @@ final class SshConnection implements RemoteConnection {
                     byte[] trusted = pinnedKey(properties);
                     if (trusted != null) {
                         if (Arrays.equals(trusted, key)) {
-                            return OK;
+                            return verified();
                         }
                         failure = new ChangedHostKeyException(endpoint, key);
                         return CHANGED;
@@ -544,12 +553,23 @@ final class SshConnection implements RemoteConnection {
                     }
                     properties.setProperty(endpoint, Base64.getEncoder().encodeToString(key));
                     save(properties);
-                    return OK;
+                    return verified();
                 } catch (IOException | JSchException | RuntimeException problem) {
                     failure = new IOException("Could not verify the SSH host key.", problem);
                     return CHANGED;
                 }
             }
+        }
+
+        private int verified() {
+            if (hostVerified != null) {
+                try {
+                    hostVerified.run();
+                } catch (RuntimeException ignored) {
+                    // A diagnostic observer cannot change the result of host-key validation.
+                }
+            }
+            return OK;
         }
 
         private Properties load() throws IOException {

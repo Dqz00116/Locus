@@ -31,7 +31,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.jcraft.jsch.JSchAlgoNegoFailException;
+import com.jcraft.jsch.JSchException;
+
 import dev.locus.app.ConnectionDialog.AuthMode;
+import dev.locus.app.DiagnosticLog.Outcome;
+import dev.locus.app.DiagnosticLog.Stage;
 
 import java.io.File;
 import java.io.IOException;
@@ -43,6 +48,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity {
     private enum Selection { NONE, PLACE, MINIMIZE }
@@ -64,6 +70,8 @@ public final class MainActivity extends Activity {
     private boolean freeFloating;
     private WorkspacePane restoring;
     private RemoteConnection connection;
+    private DiagnosticLog diagnostics;
+    private DiagnosticLog.Trace connectionTrace;
     private SshConnection.Profile lastDirect;
     private String lastUsername = "";
     private boolean preferFrp;
@@ -88,6 +96,7 @@ public final class MainActivity extends Activity {
     public void onCreate(Bundle state) {
         super.onCreate(state);
         credentials = new LocalCredentials(this);
+        diagnostics = DiagnosticLog.get(this);
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
         freeFloating = preferences.getBoolean("freeFloatingControls", false);
         restoreConnectionDraft();
@@ -456,6 +465,7 @@ public final class MainActivity extends Activity {
         if (connection != null && !connection.isOpen()) {
             RemoteConnection ended = connection;
             connection = null;
+            endConnectionTrace();
             onIo(ended::close);
         }
         refreshConnection();
@@ -464,12 +474,23 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         RemoteConnection previous = connection;
         connection = null;
+        endConnectionTrace();
         connectedEndpoint = null;
         connectedUsername = null;
         for (WorkspacePane pane : panes) pane.detach();
         for (WorkspacePane pane : minimized) pane.detach();
         if (previous != null) onIo(previous::close);
         refreshConnection();
+    }
+
+    DiagnosticLog.Trace diagnosticTrace(RemoteConnection target) {
+        return connection == target ? connectionTrace : null;
+    }
+
+    private void endConnectionTrace() {
+        if (connectionTrace == null) return;
+        connectionTrace.record(Stage.SESSION, Outcome.DISCONNECTED);
+        connectionTrace = null;
     }
 
     void chooseDirectory(WorkspacePane pane) {
@@ -834,16 +855,23 @@ public final class MainActivity extends Activity {
         connectionProgress = getString(request.frp ? R.string.starting_frp : R.string.connecting_ssh);
         refreshConnection();
         File pins = new File(getFilesDir(), "ssh-host-pins");
-        io.execute(() -> establish(pane, request, approval, expected, direct, pins, reopenDirectory));
+        DiagnosticLog.Trace trace = diagnostics.begin(
+                request.frp ? DiagnosticLog.Route.FRP_STCP : DiagnosticLog.Route.DIRECT,
+                request.authMode == AuthMode.KEY ? DiagnosticLog.Auth.KEY : DiagnosticLog.Auth.PASSWORD);
+        trace.record(Stage.PREPARE, Outcome.STARTED);
+        io.execute(() -> establish(pane, request, approval, expected, direct, pins, reopenDirectory, trace));
     }
 
     private void establish(WorkspacePane pane, ConnectionDialog.Request request,
                            SshConnection.HostKeyApproval approval, SavedSshConnection expected,
-                           SshConnection.Profile direct, File pins, boolean reopenDirectory) {
+                           SshConnection.Profile direct, File pins, boolean reopenDirectory,
+                           DiagnosticLog.Trace trace) {
         FrpRoute route = null;
         byte[] frpConfig = null;
         byte[] key = null;
         byte[] keyToSave = null;
+        Stage stage = Stage.PREPARE;
+        AtomicBoolean hostVerified = new AtomicBoolean();
         try {
             boolean savedKey = request.authMode == AuthMode.KEY && request.useSavedKey;
             if (request.authMode == AuthMode.KEY) {
@@ -878,9 +906,13 @@ public final class MainActivity extends Activity {
                 }
                 secret = stored.secret;
             }
+            trace.record(Stage.PREPARE, Outcome.READY);
             SshConnection.Profile profile = direct;
             if (request.frp) {
+                stage = Stage.FRP_RELAY;
+                trace.record(stage, Outcome.STARTED);
                 route = FrpRoute.start(frpConfig);
+                trace.record(stage, Outcome.READY);
                 profile = new SshConnection.Profile("127.0.0.1", route.port(), request.username, endpoint);
                 main.post(() -> {
                     if (destroyed) return;
@@ -888,9 +920,14 @@ public final class MainActivity extends Activity {
                     refreshConnection();
                 });
             }
+            stage = Stage.SSH_HANDSHAKE;
+            trace.record(stage, Outcome.STARTED);
             int connectTimeout = route == null ? SshConnection.DEFAULT_CONNECT_TIMEOUT_MS : FrpRoute.SSH_CONNECT_TIMEOUT_MS;
             SshConnection result = SshConnection.connect(profile, secret, key, pins, approval,
-                    route, route == null ? null : route::close, connectTimeout);
+                    route, route == null ? null : route::close, connectTimeout, () -> {
+                        if (hostVerified.compareAndSet(false, true)) trace.record(Stage.HOST_KEY, Outcome.READY);
+                    });
+            trace.record(Stage.SSH_AUTH, Outcome.READY);
             route = null;
             if (destroyed) {
                 result.close();
@@ -925,6 +962,8 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 connection = result;
+                connectionTrace = trace;
+                trace.record(Stage.SESSION, Outcome.READY);
                 if (saved != null) savedConnection = saved;
                 connectedEndpoint = connectedRoute;
                 connectedUsername = request.username;
@@ -945,6 +984,7 @@ public final class MainActivity extends Activity {
                 }
             });
         } catch (SshConnection.UnknownHostKeyException unknown) {
+            trace.record(Stage.HOST_KEY, Outcome.APPROVAL_REQUIRED);
             main.post(() -> {
                 if (destroyed) return;
                 connecting = false;
@@ -959,7 +999,13 @@ public final class MainActivity extends Activity {
                         .show();
             });
         } catch (Exception failure) {
-            String message = connectionFailureMessage(route, failure);
+            Outcome outcome = connectionFailureOutcome(route, failure);
+            Stage failedStage = stage;
+            if (outcome == Outcome.STCP_OPEN_FAILED) failedStage = Stage.STCP;
+            else if (outcome == Outcome.HOST_CHANGED) failedStage = Stage.HOST_KEY;
+            else if (hostVerified.get() || outcome == Outcome.AUTH_REJECTED) failedStage = Stage.SSH_AUTH;
+            trace.record(failedStage, outcome);
+            String message = connectionFailureMessage(route, failure, outcome);
             main.post(() -> {
                 if (destroyed) return;
                 connecting = false;
@@ -979,10 +1025,22 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private String connectionFailureMessage(FrpRoute route, Exception failure) {
+    private static Outcome connectionFailureOutcome(FrpRoute route, Exception failure) {
+        if (route != null && !route.failureHint().isEmpty()) return Outcome.STCP_OPEN_FAILED;
+        if (failure instanceof SshConnection.ChangedHostKeyException) return Outcome.HOST_CHANGED;
+        if (failure instanceof JSchAlgoNegoFailException) return Outcome.NEGOTIATION_FAILED;
+        if (FrpRoute.isSshTimeout(failure)) return Outcome.TIMEOUT;
+        String message = failure.getMessage();
+        if (failure instanceof JSchException && message != null && message.startsWith("Auth fail")) {
+            return Outcome.AUTH_REJECTED;
+        }
+        return Outcome.FAILED;
+    }
+
+    private String connectionFailureMessage(FrpRoute route, Exception failure, Outcome outcome) {
         if (route != null) {
-            if (!route.failureHint().isEmpty()) return getString(R.string.frp_stcp_route_failed);
-            if (FrpRoute.isSshTimeout(failure)) return getString(R.string.frp_ssh_response_timeout);
+            if (outcome == Outcome.STCP_OPEN_FAILED) return getString(R.string.frp_stcp_route_failed);
+            if (outcome == Outcome.TIMEOUT) return getString(R.string.frp_ssh_response_timeout);
         }
         return WorkspacePane.errorMessage(failure);
     }
@@ -1080,6 +1138,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        endConnectionTrace();
         for (WorkspacePane pane : panes) pane.dispose();
         for (WorkspacePane pane : minimized) pane.dispose();
         if (connection != null) onIo(connection::close);

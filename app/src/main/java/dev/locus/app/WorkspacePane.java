@@ -16,6 +16,9 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.TextView;
 
+import dev.locus.app.DiagnosticLog.Outcome;
+import dev.locus.app.DiagnosticLog.Stage;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.EnumMap;
@@ -353,6 +356,7 @@ final class WorkspacePane extends FrameLayout {
 
     void open(RemoteConnection connection, String directory, Runnable directoryUnavailable) {
         setStatus("Opening shell…", true);
+        DiagnosticLog.Trace trace = activity.diagnosticTrace(connection);
         long request = ++openRequest;
         // Allow the split to measure before requesting the initial PTY dimensions.
         terminal.post(() -> {
@@ -361,12 +365,20 @@ final class WorkspacePane extends FrameLayout {
             io.execute(() -> {
                 boolean resolved = false;
                 try {
+                    if (trace != null) trace.record(Stage.SFTP, Outcome.STARTED);
                     String selectedDirectory = connection.canonicalDirectory(directory);
                     resolved = true;
+                    if (trace != null) {
+                        trace.record(Stage.SFTP, Outcome.READY);
+                        trace.record(Stage.PTY, Outcome.STARTED);
+                    }
                     RemoteConnection.Terminal channel = connection.openTerminal(selectedDirectory,
                             size.columns, size.rows, size.widthPx, size.heightPx);
+                    if (trace != null) trace.record(Stage.PTY, Outcome.READY);
                     main.post(() -> attach(request, connection, selectedDirectory, channel));
                 } catch (Exception failure) {
+                    if (trace != null) trace.record(resolved ? Stage.PTY : Stage.SFTP,
+                            resolved ? Outcome.FAILED : Outcome.PATH_UNAVAILABLE);
                     boolean chooseAgain = !resolved && directoryUnavailable != null;
                     main.post(() -> {
                         if (disposed || request != openRequest) return;

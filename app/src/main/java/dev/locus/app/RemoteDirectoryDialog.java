@@ -175,6 +175,7 @@ final class RemoteDirectoryDialog {
 
     private void open(String path) {
         cancelRequest();
+        DiagnosticLog.Trace trace = activity.diagnosticTrace(connection);
         long current = generation;
         requested = path;
         canonical = null;
@@ -191,6 +192,7 @@ final class RemoteDirectoryDialog {
         status.setText("Loading remote folders…");
         try {
             request = io.submit(() -> {
+                if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, DiagnosticLog.Outcome.STARTED);
                 String resolved = null;
                 List<RemoteConnection.FileEntry> entries = new ArrayList<>();
                 String error = null;
@@ -207,6 +209,8 @@ final class RemoteDirectoryDialog {
                     if (error == null || error.trim().isEmpty()) error = "The remote operation failed.";
                 }
                 if (Thread.currentThread().isInterrupted()) return;
+                if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, error == null
+                        ? DiagnosticLog.Outcome.READY : DiagnosticLog.Outcome.FAILED);
                 String directory = resolved;
                 String message = error;
                 activity.runOnUiThread(() -> {
@@ -217,6 +221,7 @@ final class RemoteDirectoryDialog {
                 });
             });
         } catch (RejectedExecutionException unavailable) {
+            if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, DiagnosticLog.Outcome.FAILED);
             loaded(null, Collections.emptyList(), "File operations are unavailable.");
         }
     }
