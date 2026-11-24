@@ -14,6 +14,8 @@ import com.jcraft.jsch.SftpException;
 import com.jcraft.jsch.SocketFactory;
 import com.jcraft.jsch.UserInfo;
 
+import dev.locus.app.OperationException.Reason;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -117,7 +119,7 @@ final class SshConnection implements RemoteConnection {
             int connectTimeoutMs, Runnable hostVerified) throws IOException, JSchException {
         try {
             if (privateKey != null && (privateKey.length == 0 || privateKey.length > MAX_PRIVATE_KEY_BYTES)) {
-                throw new IOException("Choose a private key file no larger than 64 KiB.");
+                throw new OperationException(Reason.SSH_KEY_SIZE, "Choose a private key file no larger than 64 KiB.");
             }
             return establish(profile, secret, privateKey, hostPins, approval, sockets, closeRoute,
                     connectTimeoutMs, hostVerified);
@@ -154,7 +156,8 @@ final class SshConnection implements RemoteConnection {
                             secretBytes.length == 0 ? null : secretBytes);
                 } catch (JSchException | RuntimeException invalidKey) {
                     // A parser error might contain part of the input. Do not retain its cause.
-                    throw new IOException("Could not open the SSH key. Check the file format and passphrase.");
+                    throw new OperationException(Reason.SSH_KEY_INVALID,
+                            "Could not open the SSH key. Check the file format and passphrase.");
                 }
             }
             Arrays.fill(secretBytes, (byte) 0);
@@ -251,7 +254,7 @@ final class SshConnection implements RemoteConnection {
         @Override
         public void write(byte[] bytes) throws IOException {
             if (!isOpen()) {
-                throw new IOException("The terminal channel is closed.");
+                throw new OperationException(Reason.TERMINAL_CLOSED, "The terminal channel is closed.");
             }
             output.write(bytes);
             output.flush();
@@ -293,7 +296,7 @@ final class SshConnection implements RemoteConnection {
         try {
             String canonical = sftp.realpath(sftpPath(sftp, path));
             if (!sftp.stat(literalPath(canonical)).isDir()) {
-                throw new IOException("The remote path is not a directory.");
+                throw new OperationException(Reason.REMOTE_NOT_DIRECTORY, "The remote path is not a directory.");
             }
             return canonical;
         } catch (SftpException failure) {
@@ -309,7 +312,7 @@ final class SshConnection implements RemoteConnection {
         try {
             String literal = literalPath(sftpPath(sftp, path));
             if (!sftp.stat(literal).isDir()) {
-                throw new IOException("The remote path is not a directory.");
+                throw new OperationException(Reason.REMOTE_NOT_DIRECTORY, "The remote path is not a directory.");
             }
             List<FileEntry> entries = new ArrayList<>();
             boolean[] limited = {false};
@@ -332,7 +335,8 @@ final class SshConnection implements RemoteConnection {
             });
             requireNotInterrupted();
             if (limited[0]) {
-                throw new IOException("The directory exceeds the 10,000-entry preview limit.");
+                throw new OperationException(Reason.DIRECTORY_LIMIT,
+                        "The directory exceeds the 10,000-entry preview limit.");
             }
             return entries;
         } catch (SftpException failure) {
@@ -351,7 +355,7 @@ final class SshConnection implements RemoteConnection {
         try {
             String literal = literalPath(sftpPath(sftp, path));
             if (!sftp.lstat(literal).isReg()) {
-                throw new IOException("The remote path is not a regular file.");
+                throw new OperationException(Reason.REMOTE_NOT_FILE, "The remote path is not a regular file.");
             }
             try (InputStream input = sftp.get(literal)) {
                 byte[] buffer = new byte[16 * 1024];
@@ -398,10 +402,23 @@ final class SshConnection implements RemoteConnection {
         }
     }
 
-    private static IOException sshError(Exception failure) {
+    private static OperationException sshError(Exception failure) {
         String message = failure.getMessage();
-        return new IOException(message == null || message.isEmpty()
+        Reason reason = failure instanceof SftpException
+                ? sftpFailureReason(((SftpException) failure).id) : Reason.SSH_OPERATION_FAILED;
+        return new OperationException(reason, message == null || message.isEmpty()
                 ? "The remote SSH operation failed." : message, failure);
+    }
+
+    private static Reason sftpFailureReason(int status) {
+        switch (status) {
+            case ChannelSftp.SSH_FX_NO_SUCH_FILE: return Reason.SFTP_NOT_FOUND;
+            case ChannelSftp.SSH_FX_PERMISSION_DENIED: return Reason.SFTP_PERMISSION_DENIED;
+            case ChannelSftp.SSH_FX_OP_UNSUPPORTED: return Reason.SFTP_UNSUPPORTED;
+            case ChannelSftp.SSH_FX_NO_CONNECTION:
+            case ChannelSftp.SSH_FX_CONNECTION_LOST: return Reason.SFTP_DISCONNECTED;
+            default: return Reason.SSH_OPERATION_FAILED;
+        }
     }
 
     private static String sftpPath(ChannelSftp sftp, String path) throws IOException, SftpException {
@@ -437,7 +454,7 @@ final class SshConnection implements RemoteConnection {
 
     private static void validatePath(String path) throws IOException {
         if (path == null || path.indexOf('\0') >= 0) {
-            throw new IOException("Invalid remote path.");
+            throw new OperationException(Reason.REMOTE_PATH_INVALID, "Invalid remote path.");
         }
     }
 
@@ -457,14 +474,14 @@ final class SshConnection implements RemoteConnection {
         }
     }
 
-    static final class UnknownHostKeyException extends IOException {
+    static final class UnknownHostKeyException extends OperationException {
         final HostKeyApproval approval;
         final String endpoint;
         final String keyType;
         final String fingerprint;
 
         private UnknownHostKeyException(String endpoint, HostKey hostKey, byte[] rawKey) {
-            super("Verify the SSH host fingerprint for " + endpoint + ".");
+            super(Reason.SSH_HOST_APPROVAL_REQUIRED, "Verify the SSH host fingerprint for " + endpoint + ".");
             approval = new HostKeyApproval(endpoint, rawKey);
             this.endpoint = endpoint;
             keyType = hostKey.getType();
@@ -472,12 +489,12 @@ final class SshConnection implements RemoteConnection {
         }
     }
 
-    static final class ChangedHostKeyException extends IOException {
+    static final class ChangedHostKeyException extends OperationException {
         final String endpoint;
         final String fingerprint;
 
         private ChangedHostKeyException(String endpoint, byte[] key) {
-            super("The SSH host key for " + endpoint + " changed. Connection refused.");
+            super(Reason.SSH_HOST_CHANGED, "The SSH host key for " + endpoint + " changed. Connection refused.");
             this.endpoint = endpoint;
             fingerprint = SshConnection.fingerprint(key);
         }
@@ -521,7 +538,8 @@ final class SshConnection implements RemoteConnection {
                     String first = type.equals("ssh-rsa") ? "rsa-sha2-512,rsa-sha2-256" : type;
                     return first + "," + RAW_HOST_ALGORITHMS;
                 } catch (JSchException | RuntimeException invalid) {
-                    throw new IOException("The saved SSH host key is unreadable.", invalid);
+                    throw new OperationException(Reason.SSH_HOST_KEY_UNREADABLE,
+                            "The saved SSH host key is unreadable.", invalid);
                 }
             }
         }
@@ -529,7 +547,8 @@ final class SshConnection implements RemoteConnection {
         @Override
         public int check(String host, byte[] key) {
             if (!endpoint.equals(host)) {
-                failure = new IOException("SSH host identity does not match the endpoint.");
+                failure = new OperationException(Reason.SSH_HOST_IDENTITY_MISMATCH,
+                        "SSH host identity does not match the endpoint.");
                 return CHANGED;
             }
             synchronized (FILE_LOCK) {
@@ -555,7 +574,8 @@ final class SshConnection implements RemoteConnection {
                     save(properties);
                     return verified();
                 } catch (IOException | JSchException | RuntimeException problem) {
-                    failure = new IOException("Could not verify the SSH host key.", problem);
+                    failure = new OperationException(Reason.SSH_HOST_VERIFICATION_FAILED,
+                            "Could not verify the SSH host key.", problem);
                     return CHANGED;
                 }
             }
@@ -578,7 +598,8 @@ final class SshConnection implements RemoteConnection {
                 try (InputStream input = Files.newInputStream(file.toPath())) {
                     properties.load(input);
                 } catch (IllegalArgumentException invalid) {
-                    throw new IOException("The saved SSH host keys are unreadable.", invalid);
+                    throw new OperationException(Reason.SSH_HOST_KEY_UNREADABLE,
+                            "The saved SSH host keys are unreadable.", invalid);
                 }
             }
             return properties;
@@ -592,7 +613,8 @@ final class SshConnection implements RemoteConnection {
             try {
                 return Base64.getDecoder().decode(encoded);
             } catch (IllegalArgumentException invalid) {
-                throw new IOException("The saved SSH host key is unreadable.", invalid);
+                throw new OperationException(Reason.SSH_HOST_KEY_UNREADABLE,
+                        "The saved SSH host key is unreadable.", invalid);
             }
         }
 

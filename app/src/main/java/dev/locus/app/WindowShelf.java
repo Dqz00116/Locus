@@ -63,6 +63,12 @@ final class WindowShelf {
         FloatingTools.setFreeFloating(handle, enabled);
     }
 
+    void refreshLocale() {
+        dismiss();
+        LocusChrome.labelIcon(handle, context.getString(R.string.shelf_minimized_windows));
+        FloatingTools.refreshLocale(handle);
+    }
+
     void update(List<WorkspacePane> minimized, boolean targeting) {
         if (!windows.equals(minimized)) {
             dismiss();

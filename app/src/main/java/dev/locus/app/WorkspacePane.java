@@ -29,6 +29,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 final class WorkspacePane extends FrameLayout {
     static final int MOUNT_RAIL_DP = 8;
@@ -59,7 +60,8 @@ final class WorkspacePane extends FrameLayout {
     private long openRequest;
     private boolean showingBrowser;
     private boolean connected;
-    private String connectionProgress;
+    private int connectionProgress;
+    private Supplier<String> statusMessage;
     private boolean canReconnect;
     private volatile boolean minimized;
     private volatile long placementGeneration;
@@ -99,7 +101,6 @@ final class WorkspacePane extends FrameLayout {
         addView(status, statusSpace);
 
         terminal = new LocusTerminalView(activity);
-        terminal.setContentDescription("Terminal window " + this.id);
         terminal.setOnFocusChangeListener((view, focused) -> {
             if (focused && !minimized) activity.activate(this);
         });
@@ -110,7 +111,7 @@ final class WorkspacePane extends FrameLayout {
                 // A hidden live terminal still answers remote terminal capability queries.
                 if (current == null) return;
                 if (data.length > 65536) {
-                    setStatus("Input exceeds 64 KiB", true);
+                    setStatus(R.string.workspace_input_limit, true, 64);
                     return;
                 }
                 send(current, () -> current.channel.write(data));
@@ -123,7 +124,6 @@ final class WorkspacePane extends FrameLayout {
         });
         body.addView(terminal, new FrameLayout.LayoutParams(-1, -1));
         placeholder = new TextView(activity);
-        placeholder.setText("Connect to an SSH host");
         placeholder.setTextColor(activity.getColor(R.color.text_secondary));
         placeholder.setBackgroundColor(activity.getColor(R.color.surface));
         placeholder.setTextSize(14);
@@ -132,31 +132,28 @@ final class WorkspacePane extends FrameLayout {
         placeholder.setOnClickListener(view -> activity.openEmptyWindow(this));
         body.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
 
-        windowOptions = LocusChrome.iconAction(activity, R.drawable.ic_more, "Window options");
+        windowOptions = LocusChrome.iconAction(activity, R.drawable.ic_more, null);
         int target = activity.dp(MOUNT_TARGET_DP);
         body.addView(windowOptions, new FrameLayout.LayoutParams(target, target, Gravity.TOP | Gravity.LEFT));
         FloatingTools.bindTrigger(windowOptions, body, false, activity.freeFloating(), () -> showWindowOptions(windowOptions));
         positionWindowOptions();
 
         minimizeTarget = new ImageButton(activity);
-        minimizeTarget.setContentDescription(activity.getString(R.string.select_minimize_target, id));
         minimizeTarget.setScaleType(ImageButton.ScaleType.CENTER);
         minimizeTarget.setBackground(null);
         minimizeTarget.setOnClickListener(view -> activity.minimizePane(this));
         minimizeTarget.setVisibility(View.GONE);
         addView(minimizeTarget, new FrameLayout.LayoutParams(-1, -1));
 
-        addMount(PaneDock.Edge.TOP, "Add window above", Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        addMount(PaneDock.Edge.BOTTOM, "Add window below", Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        addMount(PaneDock.Edge.LEFT, "Add window left", Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        addMount(PaneDock.Edge.RIGHT, "Add window right", Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        updateOptionsTooltip();
-        updatePlaceholder();
+        addMount(PaneDock.Edge.TOP, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        addMount(PaneDock.Edge.BOTTOM, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        addMount(PaneDock.Edge.LEFT, Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        addMount(PaneDock.Edge.RIGHT, Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        refreshLocale();
     }
 
-    private void addMount(PaneDock.Edge edge, String label, int gravity) {
+    private void addMount(PaneDock.Edge edge, int gravity) {
         ImageButton mount = new ImageButton(activity);
-        mount.setContentDescription(label);
         int target = activity.dp(MOUNT_TARGET_DP);
         int railInset = activity.dp(2);
         boolean horizontal = edge == PaneDock.Edge.TOP || edge == PaneDock.Edge.BOTTOM;
@@ -232,7 +229,7 @@ final class WorkspacePane extends FrameLayout {
     String shelfDetail() {
         String message = status.getText().toString();
         if (directory.isEmpty()) return message;
-        return message.isEmpty() || message.equals("Shell active") ? directory : directory + "\n" + message;
+        return message.isEmpty() || status.getVisibility() != View.VISIBLE ? directory : directory + "\n" + message;
     }
 
     int shelfId() {
@@ -314,18 +311,35 @@ final class WorkspacePane extends FrameLayout {
         FloatingTools.setFreeFloating(windowOptions, enabled);
     }
 
+    void refreshLocale() {
+        terminal.setContentDescription(activity.getString(R.string.workspace_terminal_number, id));
+        windowOptions.setContentDescription(activity.getText(R.string.workspace_window_options));
+        minimizeTarget.setContentDescription(activity.getString(R.string.select_minimize_target, id));
+        mounts.get(PaneDock.Edge.TOP).setContentDescription(activity.getText(R.string.workspace_mount_above));
+        mounts.get(PaneDock.Edge.BOTTOM).setContentDescription(activity.getText(R.string.workspace_mount_below));
+        mounts.get(PaneDock.Edge.LEFT).setContentDescription(activity.getText(R.string.workspace_mount_left));
+        mounts.get(PaneDock.Edge.RIGHT).setContentDescription(activity.getText(R.string.workspace_mount_right));
+        FloatingTools.refreshLocale(windowOptions);
+        updatePlaceholder();
+        updateStatusText();
+        if (browser != null) browser.refreshLocale();
+    }
+
     private void showWindowOptions(View anchor) {
         FloatingTools tools = new FloatingTools(anchor, body);
-        tools.add(R.drawable.ic_folder, "Choose directory", connected, () -> activity.chooseDirectory(this));
+        tools.add(R.drawable.ic_folder, activity.getString(R.string.workspace_choose_directory), connected,
+                () -> activity.chooseDirectory(this));
         boolean canBrowse = showingBrowser || connected && connection != null && !directory.isEmpty();
         tools.add(showingBrowser ? R.drawable.ic_terminal : R.drawable.ic_files,
-                showingBrowser ? "Terminal" : "Browse", canBrowse, this::toggleBrowser);
+                activity.getString(showingBrowser ? R.string.shelf_terminal : R.string.workspace_browse),
+                canBrowse, this::toggleBrowser);
         boolean keyboardVisible = activity.isKeyboardVisible(terminal);
-        tools.add(R.drawable.ic_keyboard, "Keyboard", hasLiveTerminal() && !showingBrowser,
+        tools.add(R.drawable.ic_keyboard, activity.getString(R.string.workspace_keyboard), hasLiveTerminal() && !showingBrowser,
                 () -> toggleKeyboard(keyboardVisible));
         tools.add(R.drawable.ic_rename, activity.getString(R.string.rename_window), true,
                 () -> activity.renameWindow(this));
-        tools.add(R.drawable.ic_close_window, "Close window", true, () -> activity.closePane(this));
+        tools.add(R.drawable.ic_close_window, activity.getString(R.string.workspace_close_window), true,
+                () -> activity.closePane(this));
         tools.show();
     }
 
@@ -334,7 +348,7 @@ final class WorkspacePane extends FrameLayout {
         return current != null && current.channel.isOpen();
     }
 
-    void updateConnection(boolean connected, String progress, boolean canReconnect) {
+    void updateConnection(boolean connected, int progress, boolean canReconnect) {
         this.connected = connected;
         this.connectionProgress = progress;
         this.canReconnect = canReconnect;
@@ -343,10 +357,10 @@ final class WorkspacePane extends FrameLayout {
 
     private void updatePlaceholder() {
         if (placeholder.getVisibility() == View.VISIBLE) {
-            placeholder.setText(connectionProgress != null ? connectionProgress
-                    : connected ? "Choose a remote directory" : canReconnect ? activity.getString(R.string.reconnect_window)
-                    : "Connect to an SSH host");
-            placeholder.setEnabled(connectionProgress == null);
+            int prompt = connected ? R.string.workspace_choose_directory_prompt
+                    : canReconnect ? R.string.reconnect_window : R.string.workspace_connect_prompt;
+            placeholder.setText(activity.getText(connectionProgress != 0 ? connectionProgress : prompt));
+            placeholder.setEnabled(connectionProgress == 0);
         }
     }
 
@@ -355,7 +369,7 @@ final class WorkspacePane extends FrameLayout {
     }
 
     void open(RemoteConnection connection, String directory, Runnable directoryUnavailable) {
-        setStatus("Opening shell…", true);
+        setStatus(R.string.workspace_shell_opening, true);
         DiagnosticLog.Trace trace = activity.diagnosticTrace(connection);
         long request = ++openRequest;
         // Allow the split to measure before requesting the initial PTY dimensions.
@@ -382,7 +396,7 @@ final class WorkspacePane extends FrameLayout {
                     boolean chooseAgain = !resolved && directoryUnavailable != null;
                     main.post(() -> {
                         if (disposed || request != openRequest) return;
-                        setStatus(errorMessage(failure), true);
+                        setStatus(() -> UiErrors.message(activity, failure), true);
                         activity.terminalEnded();
                         if (chooseAgain && connection.isOpen()) directoryUnavailable.run();
                     });
@@ -405,7 +419,7 @@ final class WorkspacePane extends FrameLayout {
         terminal.resetTerminal();
         TerminalRun current = new TerminalRun(channel);
         run = current;
-        setStatus("Shell active", false);
+        setStatus(R.string.workspace_shell_active, false);
         activity.directoryOpened(connection, directory);
         sendResize();
         current.reader = io.submit(() -> read(current));
@@ -414,7 +428,7 @@ final class WorkspacePane extends FrameLayout {
     private void read(TerminalRun current) {
         byte[] buffer = new byte[16384];
         Semaphore pending = new Semaphore(4);
-        String outcome;
+        Supplier<String> outcome;
         try {
             int length;
             while ((length = current.channel.read(buffer)) != -1) {
@@ -430,23 +444,23 @@ final class WorkspacePane extends FrameLayout {
                 });
             }
             int code = current.channel.awaitExitStatus();
-            outcome = code < 0 ? null : "Shell exited (" + code + ")";
+            outcome = code < 0 ? null : () -> activity.getString(R.string.workspace_shell_exit, code);
         } catch (InterruptedException canceled) {
             Thread.currentThread().interrupt();
             return;
         } catch (Exception failure) {
-            outcome = "Terminal stopped. " + errorMessage(failure);
+            outcome = () -> activity.getString(R.string.workspace_terminal_stopped, UiErrors.message(activity, failure));
         }
-        String message = outcome;
+        Supplier<String> message = outcome;
         main.post(() -> {
             if (run != current) return;
             closeRun();
             if (message != null) {
                 setStatus(message, true);
             } else if (connection != null && connection.isOpen()) {
-                setStatus("SSH terminal closed", true);
+                setStatus(R.string.workspace_terminal_closed, true);
             } else {
-                setStatus("SSH disconnected", true);
+                setStatus(R.string.workspace_ssh_disconnected, true);
             }
             activity.terminalEnded();
         });
@@ -477,12 +491,12 @@ final class WorkspacePane extends FrameLayout {
                     operation.run();
                 } catch (Exception failure) {
                     main.post(() -> {
-                        if (run == current) setStatus(errorMessage(failure), true);
+                        if (run == current) setStatus(() -> UiErrors.message(activity, failure), true);
                     });
                 }
             });
         } catch (RejectedExecutionException saturated) {
-            if (run == current) setStatus("Terminal send queue is full. Try again.", true);
+            if (run == current) setStatus(R.string.workspace_send_queue_full, true);
         }
     }
 
@@ -518,14 +532,23 @@ final class WorkspacePane extends FrameLayout {
         else terminal.showKeyboard();
     }
 
-    private void setStatus(String message, boolean visible) {
-        status.setText(message);
+    private void setStatus(int message, boolean visible, Object... args) {
+        setStatus(() -> activity.getString(message, args), visible);
+    }
+
+    private void setStatus(Supplier<String> message, boolean visible) {
+        statusMessage = message;
         status.setVisibility(visible ? View.VISIBLE : View.GONE);
+        updateStatusText();
+    }
+
+    private void updateStatusText() {
+        if (statusMessage != null) status.setText(statusMessage.get());
         updateOptionsTooltip();
     }
 
     private void updateOptionsTooltip() {
-        StringBuilder tooltip = new StringBuilder("Window options");
+        StringBuilder tooltip = new StringBuilder(activity.getString(R.string.workspace_window_options));
         if (!directory.isEmpty()) tooltip.append('\n').append(directory);
         if (status.length() > 0) tooltip.append('\n').append(status.getText());
         windowOptions.setTooltipText(tooltip);
@@ -550,7 +573,7 @@ final class WorkspacePane extends FrameLayout {
         connection = null;
         clearBrowser();
         closeRun();
-        setStatus("SSH disconnected", !directory.isEmpty());
+        setStatus(R.string.workspace_ssh_disconnected, !directory.isEmpty());
         updatePlaceholder();
     }
 
@@ -569,11 +592,6 @@ final class WorkspacePane extends FrameLayout {
         disposed = true;
         detach();
         output.shutdownNow();
-    }
-
-    static String errorMessage(Exception failure) {
-        String message = failure.getMessage();
-        return message == null || message.isEmpty() ? failure.getClass().getSimpleName() : message;
     }
 
     private interface TerminalOperation {

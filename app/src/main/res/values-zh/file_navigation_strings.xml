@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="remote_parent_folder">上一级目录</string>
-    <string name="remote_home_folder">远程主目录</string>
-    <string name="remote_back_to_folder">返回目录</string>
-    <string name="remote_refresh_folder">刷新目录</string>
-    <string name="remote_reload_preview">重新加载预览</string>
-</resources>

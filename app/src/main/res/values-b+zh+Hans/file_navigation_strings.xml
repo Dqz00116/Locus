@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_parent_folder">上一级目录</string>
+    <string name="remote_home_folder">远程主目录</string>
+    <string name="remote_back_to_folder">返回目录</string>
+    <string name="remote_refresh_folder">刷新目录</string>
+    <string name="remote_reload_preview">重新加载预览</string>
+    <string name="remote_retry">重试</string>
+    <string name="remote_filter_folders">筛选当前目录下的文件夹</string>
+    <string name="remote_choose_directory">选择远程目录</string>
+    <string name="remote_use_directory">使用此目录</string>
+    <string name="remote_loading_folders">正在加载远程文件夹…</string>
+    <string name="remote_operations_unavailable">文件操作暂不可用。</string>
+    <string name="remote_open_folder_failed">无法打开文件夹。%1$s</string>
+    <string name="remote_list_folders_failed">无法列出文件夹。%1$s</string>
+    <string name="remote_no_subfolders">没有子目录。</string>
+    <string name="remote_no_matching_folders">没有匹配的文件夹。</string>
+    <plurals name="remote_folder_results">
+        <item quantity="other">%1$d 项结果</item>
+    </plurals>
+    <string name="remote_link_name">%1$s（链接）</string>
+    <string name="remote_select_directory">请选择远程目录。</string>
+    <string name="remote_loading_directory">正在加载目录…</string>
+    <string name="remote_empty_directory">目录为空。</string>
+    <plurals name="remote_directory_entries">
+        <item quantity="other">%1$d 个条目</item>
+    </plurals>
+    <string name="remote_open_directory_failed">无法打开目录。%1$s</string>
+    <string name="remote_link_preview_unavailable">无法预览符号链接。</string>
+    <string name="remote_regular_file_preview">只可预览普通文件。</string>
+    <string name="remote_loading_preview">正在加载预览…</string>
+    <string name="remote_read_file_failed">无法读取文件。%1$s</string>
+    <string name="remote_image_preview_limit">图片超过 %1$d MiB 的预览上限。</string>
+    <string name="remote_unsupported_format">不支持此文件格式。</string>
+    <string name="remote_empty_file">文件为空。</string>
+    <string name="remote_truncated_text">显示 UTF-8 文本的前 %1$d KiB。</string>
+    <plurals name="remote_utf8_bytes">
+        <item quantity="other">UTF-8 文本 · %1$d 字节</item>
+    </plurals>
+    <string name="remote_decode_image_failed">无法解码图片。</string>
+    <string name="remote_image_dimensions_limit">图片尺寸超过预览上限。</string>
+    <string name="remote_image_dimensions">%1$d × %2$d</string>
+    <string name="remote_preview_of">%1$s 的预览</string>
+</resources>

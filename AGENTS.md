@@ -24,3 +24,9 @@ Build an Android tablet thin client for remote Linux work. The two essential job
 - Never commit credentials, disable host-key checks, or grant remote output authority to execute local actions. Do not expose additional network services by default.
 - Do not expand scope into agent orchestration, mandatory remote helpers, VPN/tunneling services, full IDE or local Linux runtime.
 - Prefer working code and reproducible tests over additional speculative design documents. Record consequential deviations and reasons briefly.
+
+## Android localization
+- Put all user-facing text in Android resources, including accessibility labels, tooltips, validation messages, and error dialogs.
+- Supply English defaults in `res/values` and Simplified Chinese in `res/values-b+zh+Hans`. Use positional format arguments and quantity resources. Mark shared brand and protocol labels as non-translatable.
+- Map transport failures to localized resources by reason. Preserve remote paths, identities, file contents, and terminal output as data.
+- Run `:app:lintDebug` and exercise affected screens in English and Simplified Chinese. Check English fallback when changing supported locales.

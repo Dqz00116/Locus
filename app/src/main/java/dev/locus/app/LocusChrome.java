@@ -47,6 +47,10 @@ final class LocusChrome {
 
     static void setIcon(ImageButton button, int icon, String label) {
         button.setImageResource(icon);
+        labelIcon(button, label);
+    }
+
+    static void labelIcon(ImageButton button, String label) {
         button.setContentDescription(label);
         button.setTooltipText(label);
     }

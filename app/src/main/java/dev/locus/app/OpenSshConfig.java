@@ -1,5 +1,7 @@
 package dev.locus.app;
 
+import dev.locus.app.OperationException.Reason;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -36,7 +38,7 @@ final class OpenSshConfig {
 
     static List<Entry> parse(byte[] utf8) throws IOException {
         if (utf8.length == 0 || utf8.length > MAX_BYTES) {
-            throw new IOException("Choose a nonempty OpenSSH config up to 64 KiB.");
+            throw new OperationException(Reason.OPENSSH_CONFIG_SIZE, "Choose a nonempty OpenSSH config up to 64 KiB.");
         }
         String config;
         try {
@@ -45,7 +47,7 @@ final class OpenSshConfig {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(utf8)).toString();
         } catch (CharacterCodingException invalid) {
-            throw new IOException("The OpenSSH config must be UTF-8.");
+            throw new OperationException(Reason.OPENSSH_CONFIG_ENCODING, "The OpenSSH config must be UTF-8.");
         }
         if (config.startsWith("\ufeff")) config = config.substring(1);
         List<Block> blocks = new ArrayList<>();
@@ -100,7 +102,8 @@ final class OpenSshConfig {
             }
         }
         if (aliases.isEmpty()) {
-            throw new IOException("The OpenSSH config has no explicit Host aliases.");
+            throw new OperationException(Reason.OPENSSH_CONFIG_NO_ALIASES,
+                    "The OpenSSH config has no explicit Host aliases.");
         }
         List<Entry> entries = new ArrayList<>(aliases.size());
         for (String alias : aliases.values()) {
@@ -189,8 +192,9 @@ final class OpenSshConfig {
                         || Character.isISOControl(character) || Character.getType(character) == Character.FORMAT);
     }
 
-    private static IOException syntaxError(int lineNumber) {
-        return new IOException("Unsupported OpenSSH connection value on line " + lineNumber + ".");
+    private static OperationException syntaxError(int lineNumber) {
+        return new OperationException(Reason.OPENSSH_CONFIG_SYNTAX, lineNumber,
+                "Unsupported OpenSSH connection value on line " + lineNumber + ".");
     }
 
     private static final class Block {

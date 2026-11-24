@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connection_action_disconnect">Disconnect SSH</string>
+    <string name="connection_disconnect_title">Disconnect from SSH?</string>
+    <string name="connection_disconnect_message">This closes the SSH channels in all open windows.</string>
+    <string name="connection_disconnect_confirm">Disconnect</string>
+    <string name="connection_setup">Connection setup</string>
+    <string name="connection_picker_unavailable">Could not open the Android file picker.</string>
+    <string name="connection_import_ssh_failed">Could not import SSH configuration</string>
+    <string name="connection_config_no_user_title">No SSH usernames in this file</string>
+    <string name="connection_config_no_user_message">Choose an OpenSSH configuration with a User setting, or enter the username directly.</string>
+    <string name="connection_choose_host_alias">Choose an SSH host alias</string>
+    <string name="connection_alias_proxy_title">SSH alias uses a proxy</string>
+    <string name="connection_alias_proxy_message">Choose an alias for a directly reachable SSH host, or select your FRP profile first.</string>
+    <string name="connection_choose_stcp_visitor">Choose an STCP visitor for SSH</string>
+    <string name="connection_import_frp_failed">Could not import FRP profile</string>
+    <string name="connection_remove_saved_file_failed">Could not remove saved file</string>
+    <string name="connection_forget_login_failed">Could not clear the saved login</string>
+    <string name="connection_save_login_warning">Connected. Some login information could not be saved on this device.</string>
+    <string name="connection_verify_host">Verify SSH host</string>
+    <string name="connection_verify_host_details">%1$s\n%2$s\n%3$s\n\nCompare the fingerprint with your server before trusting this host.</string>
+    <string name="connection_trust_host">Trust host</string>
+    <string name="connection_frp_failed">FRP / SSH connection failed</string>
+    <string name="connection_ssh_failed">SSH connection failed</string>
+</resources>

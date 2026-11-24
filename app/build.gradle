@@ -22,9 +22,23 @@ android {
         applicationId 'dev.locus.app'
         minSdk 28
         targetSdk 34
-        versionCode 12
-        versionName '0.4.5-alpha'
+        versionCode 14
+        versionName '0.4.7-alpha'
         testInstrumentationRunner 'dev.locus.app.TerminalSmoke'
+    }
+
+    androidResources {
+        generateLocaleConfig true
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
+    lint {
+        error 'HardcodedText', 'SetTextI18n', 'MissingTranslation', 'ExtraTranslation', 'StringFormatMatches'
     }
 
     compileOptions {

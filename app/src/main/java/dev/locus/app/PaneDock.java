@@ -104,6 +104,14 @@ final class PaneDock extends ViewGroup {
         splitMenu = callback;
     }
 
+    void refreshLocale() {
+        String description = getContext().getString(R.string.workspace_split_options);
+        for (int index = 0; index < getChildCount(); index++) {
+            View child = getChildAt(index);
+            if (child instanceof Divider) child.setContentDescription(description);
+        }
+    }
+
     void setMountTargeting(boolean targeting) {
         if (mountTargeting == targeting) return;
         mountTargeting = targeting;
@@ -438,7 +446,7 @@ final class PaneDock extends ViewGroup {
             // The inset keeps the visible capsule smaller than its hit area.
             grip.setBackground(new InsetDrawable(gripShape, dp(3)));
             addView(grip, new FrameLayout.LayoutParams(width, height, Gravity.CENTER));
-            setContentDescription("Split options. Tap for window actions, or drag to resize.");
+            setContentDescription(context.getString(R.string.workspace_split_options));
             setPointerIcon(PointerIcon.getSystemIcon(context, branch.vertical
                     ? PointerIcon.TYPE_VERTICAL_DOUBLE_ARROW : PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW));
             updateGripAppearance();

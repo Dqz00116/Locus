@@ -5,6 +5,8 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.AtomicFile;
 
+import dev.locus.app.OperationException.Reason;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -79,13 +81,14 @@ final class LocalCredentials {
             } catch (IOException | GeneralSecurityException | ProviderException ignored) {
                 // The platform and crypto exceptions are intentionally kept out of UI and logs.
             }
-            throw new IOException("Could not open the saved credential. Import it again.");
+            throw new OperationException(Reason.CREDENTIAL_READ_FAILED,
+                    "Could not open the saved credential. Import it again.");
         }
     }
 
     void save(Slot slot, byte[] plaintext) throws IOException {
         if (plaintext.length == 0 || plaintext.length > MAX_PAYLOAD_BYTES) {
-            throw new IOException("The credential must be between 1 byte and 64 KiB.");
+            throw new OperationException(Reason.CREDENTIAL_SIZE, "The credential must be between 1 byte and 64 KiB.");
         }
         synchronized (STORAGE_LOCK) {
             try {
@@ -102,7 +105,8 @@ final class LocalCredentials {
                         .array();
                 writeRecord(new AtomicFile(baseFile(slot)), record);
             } catch (IOException | GeneralSecurityException | ProviderException ignored) {
-                throw new IOException("Could not save the credential on this device. Try importing it again.");
+                throw new OperationException(Reason.CREDENTIAL_SAVE_FAILED,
+                        "Could not save the credential on this device. Try importing it again.");
             }
         }
     }
@@ -112,7 +116,8 @@ final class LocalCredentials {
             File base = baseFile(slot);
             new AtomicFile(base).delete();
             if (exists(slot) || sibling(base, ".new").exists()) {
-                throw new IOException("Could not remove the saved credential. Try again.");
+                throw new OperationException(Reason.CREDENTIAL_REMOVE_FAILED,
+                        "Could not remove the saved credential. Try again.");
             }
         }
     }

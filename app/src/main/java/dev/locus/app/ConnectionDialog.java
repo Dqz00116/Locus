@@ -22,8 +22,13 @@ import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.util.Locale;
+
 /** Collects an SSH connection request and delegates document selection to the activity. */
 final class ConnectionDialog {
+    private static final int MIN_PORT = 1;
+    private static final int MAX_PORT = 65535;
+
     enum AuthMode { PASSWORD, KEY }
 
     interface Listener {
@@ -137,18 +142,19 @@ final class ConnectionDialog {
         LinearLayout fields = column();
         fields.setPadding(activity.dp(16), activity.dp(4), activity.dp(16), activity.dp(12));
         fields.setFocusableInTouchMode(true);
-        LinearLayout routeSection = section(fields, "Connection method", 0);
+        LinearLayout routeSection = section(fields, R.string.connection_section_method, 0);
         RadioGroup modes = modeGroup();
-        RadioButton directMode = mode(modes, "Direct SSH");
-        RadioButton frpMode = mode(modes, "FRP STCP");
+        RadioButton directMode = mode(modes, R.string.connection_route_direct);
+        RadioButton frpMode = mode(modes, R.string.connection_route_frp);
         routeSection.addView(modes);
 
         directFields = new LinearLayout(activity);
         LinearLayout hostField = column();
-        host = field(hostField, null, "Host or IP address", rememberedHost, text);
+        host = field(hostField, null, R.string.connection_label_host, rememberedHost, text);
         directFields.addView(hostField, new LinearLayout.LayoutParams(0, -2, 1));
         LinearLayout portField = column();
-        port = field(portField, null, "Port", Integer.toString(rememberedPort), InputType.TYPE_CLASS_NUMBER);
+        port = field(portField, null, R.string.connection_label_port,
+                Integer.toString(rememberedPort), InputType.TYPE_CLASS_NUMBER);
         LinearLayout.LayoutParams portLayout = new LinearLayout.LayoutParams(activity.dp(84), -2);
         portLayout.setMarginStart(activity.dp(10));
         directFields.addView(portField, portLayout);
@@ -173,9 +179,9 @@ final class ConnectionDialog {
         frpSummary.setEllipsize(TextUtils.TruncateAt.END);
         addSpaced(frpFields, frpSummary, 6);
         LinearLayout frpActions = new LinearLayout(activity);
-        chooseFrpProfile = activity.addAction(frpActions, "Import FRP profile",
+        chooseFrpProfile = activity.addAction(frpActions, activity.getString(R.string.connection_import_frp_profile),
                 () -> listener.pickFrpProfile(this));
-        forgetFrpProfile = activity.addAction(frpActions, "Forget profile",
+        forgetFrpProfile = activity.addAction(frpActions, activity.getString(R.string.connection_forget_frp_profile),
                 () -> listener.forgetFrpProfile(this));
         frpFields.addView(frpActions);
         addSpaced(routeSection, frpFields, 10);
@@ -186,15 +192,16 @@ final class ConnectionDialog {
             previousUsername = lastDirect.username;
         }
         rememberedUsername = previousUsername == null ? "" : previousUsername.trim();
-        LinearLayout loginSection = section(fields, "SSH login", 10);
+        LinearLayout loginSection = section(fields, R.string.connection_section_ssh_login, 10);
         TextView usernameLabel = new TextView(activity);
         loginSection.addView(usernameLabel);
         LinearLayout usernameRow = new LinearLayout(activity);
         usernameRow.setGravity(Gravity.CENTER_VERTICAL);
-        this.username = input(usernameLabel, "SSH username", previousUsername, text);
+        this.username = input(usernameLabel, R.string.connection_label_ssh_username, previousUsername, text);
         usernameRow.addView(this.username, new LinearLayout.LayoutParams(0, -2, 1));
-        Button usernameOptions = activity.addAction(usernameRow, "Options");
-        usernameOptions.setContentDescription("SSH username options");
+        Button usernameOptions = activity.addAction(usernameRow,
+                activity.getString(R.string.connection_username_options));
+        usernameOptions.setContentDescription(activity.getString(R.string.connection_username_options_description));
         usernameOptions.setOnClickListener(this::showUsernameOptions);
         loginSection.addView(usernameRow);
         sshAlias = supportingText();
@@ -203,8 +210,8 @@ final class ConnectionDialog {
         sshAlias.setVisibility(View.GONE);
         addSpaced(loginSection, sshAlias, 4);
         RadioGroup authModes = modeGroup();
-        RadioButton passwordMode = mode(authModes, "Password");
-        RadioButton keyMode = mode(authModes, "SSH key");
+        RadioButton passwordMode = mode(authModes, R.string.connection_auth_password);
+        RadioButton keyMode = mode(authModes, R.string.connection_auth_key);
         authModes.check(authMode == AuthMode.KEY ? keyMode.getId() : passwordMode.getId());
         addSpaced(loginSection, authModes, 10);
 
@@ -215,12 +222,13 @@ final class ConnectionDialog {
         keySummary.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         addSpaced(keyFields, keySummary, 8);
         LinearLayout keyChoices = new LinearLayout(activity);
-        chooseKey = activity.addAction(keyChoices, "Choose SSH key", () -> listener.pickSshKey(this));
-        useSavedKeyAction = activity.addAction(keyChoices, "Use saved key",
+        chooseKey = activity.addAction(keyChoices, activity.getString(R.string.connection_choose_ssh_key),
+                () -> listener.pickSshKey(this));
+        useSavedKeyAction = activity.addAction(keyChoices, activity.getString(R.string.connection_use_saved_ssh_key),
                 () -> selectKey(null, null, true, false));
         keyFields.addView(keyChoices);
         LinearLayout keyActions = new LinearLayout(activity);
-        forgetSshKey = activity.addAction(keyActions, "Forget saved key",
+        forgetSshKey = activity.addAction(keyActions, activity.getString(R.string.connection_forget_saved_ssh_key),
                 () -> listener.forgetSshKey(this));
         keyFields.addView(keyActions);
 
@@ -230,14 +238,15 @@ final class ConnectionDialog {
 
         secretFields = column();
         secretLabel = new TextView(activity);
-        secret = field(secretFields, secretLabel, "SSH password", "",
+        secret = field(secretFields, secretLabel, R.string.connection_label_ssh_password, "",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         secret.setSaveEnabled(false);
         secret.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
 
         LinearLayout secretActions = new LinearLayout(activity);
-        savedSecretAction = activity.addAction(secretActions, "Use saved password", this::toggleSavedSecret);
-        forgetSavedSecret = activity.addAction(secretActions, "Forget saved password",
+        savedSecretAction = activity.addAction(secretActions, activity.getString(R.string.connection_use_saved_password),
+                this::toggleSavedSecret);
+        forgetSavedSecret = activity.addAction(secretActions, activity.getString(R.string.connection_forget_saved_password),
                 () -> listener.forgetSshSecret(this, this.authMode == AuthMode.KEY));
         secretFields.addView(secretActions);
         rememberSecret = checkbox();
@@ -282,10 +291,10 @@ final class ConnectionDialog {
         ScrollView scroll = new ScrollView(activity);
         scroll.addView(fields);
         dialog = new AlertDialog.Builder(activity)
-                .setTitle("Connect")
+                .setTitle(R.string.connection_action_connect)
                 .setView(scroll)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Connect", null)
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.connection_action_connect, null)
                 .create();
         dialog.setOnDismissListener(ignored -> secret.getText().clear());
     }
@@ -326,14 +335,16 @@ final class ConnectionDialog {
     }
 
     private void refreshFrpProfile() {
-        String defaultSummary = hasFrpProfile ? "Saved FRP profile"
-                : activity.getString(R.string.native_frp_import_hint);
+        String defaultSummary = activity.getString(hasFrpProfile ? R.string.connection_saved_frp_profile
+                : R.string.native_frp_import_hint);
         String summary = frpChoice == null ? defaultSummary : safeLabel(frpChoice.label);
         if (frpChoice != null && frpChoice.hasProxyDefinitions) {
             summary += "\n" + activity.getString(R.string.native_frp_mixed_profile);
         }
-        frpSummary.setText(frpImportPending ? "Reading FRP profile…" : summary);
-        chooseFrpProfile.setText(hasFrpProfile ? "Replace FRP profile" : "Import FRP profile");
+        frpSummary.setText(frpImportPending ? activity.getString(R.string.connection_reading_frp_profile)
+                : summary);
+        chooseFrpProfile.setText(hasFrpProfile ? R.string.connection_replace_frp_profile
+                : R.string.connection_import_frp_profile);
         chooseFrpProfile.setEnabled(!frpImportPending);
         forgetFrpProfile.setVisibility(hasFrpProfile ? View.VISIBLE : View.GONE);
         forgetFrpProfile.setEnabled(!frpImportPending);
@@ -361,13 +372,14 @@ final class ConnectionDialog {
         clearSecretChoice();
         if (!frp) {
             host.setText(hostname);
-            port.setText(Integer.toString(remotePort));
+            // Keep the port field in the same protocol format as the remembered endpoint.
+            port.setText(String.format(Locale.ROOT, "%d", remotePort));
         }
         if (!TextUtils.isEmpty(user)) username.setText(user);
         if (TextUtils.isEmpty(alias)) {
             sshAlias.setVisibility(View.GONE);
         } else {
-            sshAlias.setText("SSH alias " + safeLabel(alias));
+            sshAlias.setText(activity.getString(R.string.connection_ssh_alias, safeLabel(alias)));
             sshAlias.setVisibility(View.VISIBLE);
         }
         refreshSecret();
@@ -387,16 +399,17 @@ final class ConnectionDialog {
     private void refreshAuthentication() {
         boolean attached = keyUri != null;
         keyFields.setVisibility(authMode == AuthMode.KEY ? View.VISIBLE : View.GONE);
-        chooseKey.setText(attached ? "Change SSH key" : "Choose SSH key");
+        chooseKey.setText(attached ? R.string.connection_change_ssh_key : R.string.connection_choose_ssh_key);
         useSavedKeyAction.setVisibility(hasSavedKey && !useSavedKey ? View.VISIBLE : View.GONE);
         forgetSshKey.setVisibility(hasSavedKey ? View.VISIBLE : View.GONE);
         keySummary.setVisibility(hasSelectedKey() ? View.VISIBLE : View.GONE);
         if (hasSelectedKey()) {
-            keySummary.setText(useSavedKey ? "Using saved SSH key"
-                    : TextUtils.isEmpty(keyName) ? "SSH key selected" : safeLabel(keyName));
+            if (useSavedKey) keySummary.setText(R.string.connection_using_saved_ssh_key);
+            else if (TextUtils.isEmpty(keyName)) keySummary.setText(R.string.connection_ssh_key_selected);
+            else keySummary.setText(safeLabel(keyName));
         }
-        saveKey.setText(hasSavedKey ? "Replace the encrypted SSH key saved on this tablet"
-                : "Save an encrypted copy of this SSH key on this tablet");
+        saveKey.setText(hasSavedKey ? R.string.connection_replace_encrypted_ssh_key
+                : R.string.connection_save_encrypted_ssh_key);
         saveKey.setVisibility(attached ? View.VISIBLE : View.GONE);
         refreshSecret();
     }
@@ -405,20 +418,22 @@ final class ConnectionDialog {
         boolean keyAuthentication = authMode == AuthMode.KEY;
         secretFields.setVisibility(!keyAuthentication || hasSelectedKey() ? View.VISIBLE : View.GONE);
         boolean available = canUseSavedSecret();
-        String label = keyAuthentication ? "SSH key passphrase (optional)" : "SSH password";
+        int label = keyAuthentication ? R.string.connection_label_key_passphrase
+                : R.string.connection_label_ssh_password;
         secretLabel.setText(label);
-        secret.setContentDescription(label);
+        secret.setContentDescription(activity.getString(label));
         secret.setEnabled(!useSavedSecret);
-        secret.setHint(useSavedSecret
-                ? keyAuthentication ? "Using saved key passphrase" : "Using saved SSH password"
+        secret.setHint(useSavedSecret ? activity.getString(keyAuthentication
+                ? R.string.connection_using_saved_key_passphrase : R.string.connection_using_saved_password)
                 : null);
-        savedSecretAction.setText(useSavedSecret ? "Enter manually"
-                : keyAuthentication ? "Use saved passphrase" : "Use saved password");
+        savedSecretAction.setText(useSavedSecret ? R.string.connection_enter_manually
+                : keyAuthentication ? R.string.connection_use_saved_passphrase : R.string.connection_use_saved_password);
         savedSecretAction.setVisibility(available ? View.VISIBLE : View.GONE);
-        forgetSavedSecret.setText(keyAuthentication ? "Forget saved passphrase" : "Forget saved password");
+        forgetSavedSecret.setText(keyAuthentication ? R.string.connection_forget_saved_passphrase
+                : R.string.connection_forget_saved_password);
         forgetSavedSecret.setVisibility(available ? View.VISIBLE : View.GONE);
-        rememberSecret.setText(keyAuthentication ? "Remember key passphrase on this tablet"
-                : "Remember SSH password on this tablet");
+        rememberSecret.setText(keyAuthentication ? R.string.connection_remember_passphrase
+                : R.string.connection_remember_password);
         boolean canRemember = !keyAuthentication || useSavedKey || saveKey.isChecked();
         rememberSecret.setVisibility(!useSavedSecret && canRemember ? View.VISIBLE : View.GONE);
     }
@@ -485,7 +500,8 @@ final class ConnectionDialog {
 
     private void showUsernameOptions(View anchor) {
         FloatingTools menu = new FloatingTools(anchor);
-        menu.addText(frp ? "Import username from OpenSSH config…" : "Import from OpenSSH config…",
+        menu.addText(activity.getString(frp ? R.string.connection_import_ssh_username
+                        : R.string.connection_import_ssh_config),
                 true, () -> listener.pickSshConfig(this));
         menu.show();
     }
@@ -502,33 +518,33 @@ final class ConnectionDialog {
         if (frp) {
             if (frpImportPending) return;
             if (!hasFrpProfile) {
-                frpSummary.setText("Import an FRP profile to connect via STCP.");
+                frpSummary.setText(R.string.connection_error_frp_profile_required);
                 return;
             }
         } else {
             hostName = host.getText().toString().trim();
             if (hostName.isEmpty() || hostName.equals("[]")) {
-                host.setError("Enter an SSH host");
+                host.setError(activity.getString(R.string.connection_error_host_required));
                 return;
             }
             try {
                 portNumber = Integer.parseInt(port.getText().toString().trim());
-                if (portNumber < 1 || portNumber > 65535) throw new NumberFormatException();
+                if (portNumber < MIN_PORT || portNumber > MAX_PORT) throw new NumberFormatException();
             } catch (NumberFormatException badPort) {
-                port.setError("Enter a port from 1 to 65535");
+                port.setError(activity.getString(R.string.connection_error_port, MIN_PORT, MAX_PORT));
                 return;
             }
         }
 
         String user = username.getText().toString().trim();
         if (user.isEmpty() || user.indexOf(0) >= 0) {
-            username.setError("Enter an SSH username");
+            username.setError(activity.getString(R.string.connection_error_username_required));
             return;
         }
         boolean useStored = useSavedSecret && canUseSavedSecret();
         String typedSecret = useStored ? "" : secret.getText().toString();
         if (authMode == AuthMode.KEY && !hasSelectedKey()) {
-            keySummary.setText("Choose an SSH private key to continue.");
+            keySummary.setText(R.string.connection_error_key_required);
             keySummary.setVisibility(View.VISIBLE);
             return;
         }
@@ -548,7 +564,7 @@ final class ConnectionDialog {
         return column;
     }
 
-    private LinearLayout section(LinearLayout parent, String title, int topMargin) {
+    private LinearLayout section(LinearLayout parent, int title, int topMargin) {
         LinearLayout section = column();
         int padding = activity.dp(12);
         section.setPadding(padding, padding, padding, padding);
@@ -596,7 +612,7 @@ final class ConnectionDialog {
         return group;
     }
 
-    private RadioButton mode(RadioGroup group, String title) {
+    private RadioButton mode(RadioGroup group, int title) {
         RadioButton choice = new RadioButton(activity);
         choice.setId(View.generateViewId());
         choice.setText(title);
@@ -623,7 +639,7 @@ final class ConnectionDialog {
         return choice;
     }
 
-    private EditText field(LinearLayout fields, TextView existingLabel, String label,
+    private EditText field(LinearLayout fields, TextView existingLabel, int label,
                            String value, int inputType) {
         TextView caption = existingLabel == null ? new TextView(activity) : existingLabel;
         fields.addView(caption);
@@ -632,7 +648,7 @@ final class ConnectionDialog {
         return input;
     }
 
-    private EditText input(TextView caption, String label, String value, int inputType) {
+    private EditText input(TextView caption, int label, String value, int inputType) {
         caption.setText(label);
         caption.setTextSize(13);
         caption.setTextColor(color(R.color.text_secondary));
@@ -655,7 +671,7 @@ final class ConnectionDialog {
         input.setBackground(states);
         input.setBackgroundTintList(null);
         input.setPaddingRelative(activity.dp(12), activity.dp(8), activity.dp(12), activity.dp(8));
-        input.setContentDescription(label);
+        input.setContentDescription(activity.getString(label));
         caption.setLabelFor(input.getId());
         return input;
     }

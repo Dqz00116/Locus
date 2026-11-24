@@ -36,6 +36,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
@@ -64,7 +65,9 @@ final class RemoteBrowserView extends LinearLayout {
     private boolean disposed;
     private String directory;
     private RemoteConnection.FileEntry selectedFile;
-    private String directoryStatus;
+    // Resolve display text from the current locale without reloading the remote data.
+    private Function<Context, String> directoryStatus = string(R.string.remote_select_directory);
+    private Function<Context, String> previewStatus;
 
     RemoteBrowserView(Context context, RemoteConnection connection, ExecutorService worker) {
         super(context);
@@ -107,7 +110,7 @@ final class RemoteBrowserView extends LinearLayout {
         status.setMaxLines(4);
         status.setEllipsize(TextUtils.TruncateAt.END);
         status.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
-        status.setText("Select a remote directory.");
+        refreshStatus();
         addView(status);
 
         View divider = new View(context);
@@ -142,7 +145,7 @@ final class RemoteBrowserView extends LinearLayout {
         fileBody.setVisibility(GONE);
         listing.setVisibility(VISIBLE);
         listing.setAdapter(null);
-        showDirectoryStatus("Loading directory…");
+        showStatus(string(R.string.remote_loading_directory));
         updateNavigation();
 
         load(() -> {
@@ -157,9 +160,9 @@ final class RemoteBrowserView extends LinearLayout {
             updateNavigation();
             listing.setAdapter(new FileListAdapter(result.entries));
             int count = result.entries.size();
-            if (count == 0) showDirectoryStatus("Empty directory.");
-            else showDirectoryStatus(count + (count == 1 ? " entry" : " entries"));
-        }, this::showDirectoryStatus, "Could not open directory");
+            showStatus(count == 0 ? string(R.string.remote_empty_directory)
+                    : quantity(R.plurals.remote_directory_entries, count));
+        }, R.string.remote_open_directory_failed);
     }
 
     void dispose() {
@@ -180,15 +183,13 @@ final class RemoteBrowserView extends LinearLayout {
 
         if (!entry.regularFile) {
             cancelRequest();
-            status.setText(entry.symbolicLink
-                    ? "Symbolic link preview is unavailable."
-                    : "Preview is available for regular files.");
+            showStatus(string(entry.symbolicLink ? R.string.remote_link_preview_unavailable
+                    : R.string.remote_regular_file_preview));
             return;
         }
 
-        status.setText("Loading preview…");
-        load(() -> readPreview(path, entry.name),
-                this::showPreview, status::setText, "Could not read file");
+        showStatus(string(R.string.remote_loading_preview));
+        load(() -> readPreview(path, entry.name), this::showPreview, R.string.remote_read_file_failed);
     }
 
     private void goBack() {
@@ -198,7 +199,7 @@ final class RemoteBrowserView extends LinearLayout {
             fileBody.removeAllViews();
             fileBody.setVisibility(GONE);
             listing.setVisibility(VISIBLE);
-            status.setText(directoryStatus);
+            refreshStatus();
             updateNavigation();
         } else if (directory != null && !directory.equals("/")) {
             int slash = directory.lastIndexOf('/');
@@ -207,30 +208,66 @@ final class RemoteBrowserView extends LinearLayout {
     }
 
     private void updateNavigation() {
+        updateNavigationLabels();
         boolean preview = selectedFile != null;
-        LocusChrome.setIcon(back, preview ? R.drawable.ic_folder : R.drawable.ic_up,
-                getContext().getString(preview ? R.string.remote_back_to_folder : R.string.remote_parent_folder));
         back.setEnabled(directory != null && (preview || !directory.equals("/")));
-        LocusChrome.setIcon(refresh, R.drawable.ic_refresh,
-                getContext().getString(preview ? R.string.remote_reload_preview : R.string.remote_refresh_folder));
         refresh.setEnabled(directory != null);
         if (directory != null) {
-            String path = selectedFile == null ? directory : childPath(selectedFile.name);
+            String path = preview ? childPath(selectedFile.name) : directory;
             pathLabel.setText(visibleLabel(path));
         }
     }
 
-    private void showDirectoryStatus(String message) {
-        directoryStatus = message;
-        status.setText(message);
+    private void updateNavigationLabels() {
+        boolean preview = selectedFile != null;
+        LocusChrome.setIcon(back, preview ? R.drawable.ic_folder : R.drawable.ic_up,
+                getContext().getString(preview ? R.string.remote_back_to_folder : R.string.remote_parent_folder));
+        LocusChrome.setIcon(refresh, R.drawable.ic_refresh,
+                getContext().getString(preview ? R.string.remote_reload_preview : R.string.remote_refresh_folder));
+    }
+
+    void refreshLocale() {
+        if (disposed) return;
+        updateNavigationLabels();
+        refreshStatus();
+        View preview = fileBody.getChildAt(0);
+        if (preview instanceof ImageView) preview.setContentDescription(imageDescription());
+        int first = listing.getFirstVisiblePosition();
+        for (int index = 0; index < listing.getChildCount(); index++) {
+            RemoteConnection.FileEntry entry = (RemoteConnection.FileEntry) listing.getItemAtPosition(first + index);
+            if (entry != null && entry.symbolicLink) {
+                ((TextView) listing.getChildAt(index)).setText(entryLabel(entry));
+            }
+        }
+    }
+
+    private void showStatus(Function<Context, String> message) {
+        if (selectedFile == null) directoryStatus = message;
+        else previewStatus = message;
+        refreshStatus();
+    }
+
+    private void refreshStatus() {
+        status.setText((selectedFile == null ? directoryStatus : previewStatus).apply(getContext()));
+    }
+
+    private static Function<Context, String> string(int id) {
+        return context -> context.getString(id);
+    }
+
+    private static Function<Context, String> string(int id, Object... args) {
+        return context -> context.getString(id, args);
+    }
+
+    private static Function<Context, String> quantity(int id, int count) {
+        return context -> context.getResources().getQuantityString(id, count, count);
     }
 
     private String childPath(String name) {
         return directory.endsWith("/") ? directory + name : directory + "/" + name;
     }
 
-    private <T> void load(Callable<T> operation, Consumer<T> complete, Consumer<String> showError,
-                          String error) {
+    private <T> void load(Callable<T> operation, Consumer<T> complete, int failureMessage) {
         cancelRequest();
         long current = generation;
         try {
@@ -245,19 +282,18 @@ final class RemoteBrowserView extends LinearLayout {
                     });
                 } catch (Exception failure) {
                     if (Thread.currentThread().isInterrupted()) return;
-                    String reason = failure.getMessage();
-                    String message = reason == null || reason.trim().isEmpty()
-                            ? error + "." : error + ". " + visibleLabel(reason);
                     main.post(() -> {
                         if (current == generation && !disposed) {
                             request = null;
-                            showError.accept(message);
+                            showStatus(context -> context.getString(
+                                    failureMessage, UiErrors.message(context, failure)));
                         }
                     });
                 }
             });
         } catch (RejectedExecutionException ignored) {
-            showError.accept(error + ". File operations are unavailable.");
+            showStatus(context -> context.getString(
+                    failureMessage, context.getString(R.string.remote_operations_unavailable)));
         }
     }
 
@@ -282,20 +318,24 @@ final class RemoteBrowserView extends LinearLayout {
                 incomplete = bytes.length > IMAGE_LIMIT;
                 if (!incomplete) bounds = imageBounds(bytes, bytes.length);
             }
-            if (incomplete) return new Preview(null, null, "Image exceeds the 8 MiB preview limit.");
+            if (incomplete) {
+                return new Preview(null, null,
+                        string(R.string.remote_image_preview_limit, IMAGE_LIMIT / (1024 * 1024)));
+            }
             return decodeImage(bytes, bounds);
         }
         if (incomplete && imageName) {
-            return new Preview(null, null, "Image exceeds the 8 MiB preview limit.");
+            return new Preview(null, null,
+                    string(R.string.remote_image_preview_limit, IMAGE_LIMIT / (1024 * 1024)));
         }
 
         int textLength = Math.min(bytes.length, TEXT_LIMIT);
         boolean truncated = bytes.length > textLength;
         String text = decodeText(bytes, textLength, truncated);
-        if (text == null) return new Preview(null, null, "Unsupported file format.");
-        if (text.isEmpty()) return new Preview(null, text, "Empty file.");
-        return new Preview(null, text, truncated ? "Showing the first 64 KiB of UTF-8 text."
-                : "UTF-8 text · " + bytes.length + " bytes");
+        if (text == null) return new Preview(null, null, string(R.string.remote_unsupported_format));
+        if (text.isEmpty()) return new Preview(null, text, string(R.string.remote_empty_file));
+        return new Preview(null, text, truncated ? string(R.string.remote_truncated_text, TEXT_LIMIT / 1024)
+                : quantity(R.plurals.remote_utf8_bytes, bytes.length));
     }
 
     private static BitmapFactory.Options imageBounds(byte[] bytes, int length) {
@@ -307,18 +347,19 @@ final class RemoteBrowserView extends LinearLayout {
 
     private static Preview decodeImage(byte[] bytes, BitmapFactory.Options bounds) {
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            return new Preview(null, null, "Could not decode image.");
+            return new Preview(null, null, string(R.string.remote_decode_image_failed));
         }
         if ((long) bounds.outWidth * bounds.outHeight > IMAGE_PIXEL_LIMIT) {
-            return new Preview(null, null, "Image dimensions exceed the preview limit.");
+            return new Preview(null, null, string(R.string.remote_image_dimensions_limit));
         }
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 1;
         int largest = Math.max(bounds.outWidth, bounds.outHeight);
         while (largest / options.inSampleSize > IMAGE_DISPLAY_SIZE) options.inSampleSize *= 2;
         Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
-        if (bitmap == null) return new Preview(null, null, "Could not decode image.");
-        return new Preview(bitmap, null, bounds.outWidth + " × " + bounds.outHeight);
+        if (bitmap == null) return new Preview(null, null, string(R.string.remote_decode_image_failed));
+        return new Preview(bitmap, null,
+                string(R.string.remote_image_dimensions, bounds.outWidth, bounds.outHeight));
     }
 
     private static String decodeText(byte[] bytes, int length, boolean truncated) {
@@ -364,12 +405,12 @@ final class RemoteBrowserView extends LinearLayout {
     }
 
     private void showPreview(Preview preview) {
-        status.setText(preview.status);
+        showStatus(preview.status);
         if (preview.bitmap != null) {
             ImageView image = new ImageView(getContext());
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setPadding(dp(12), dp(12), dp(12), dp(12));
-            image.setContentDescription("Preview of " + visibleLabel(selectedFile.name));
+            image.setContentDescription(imageDescription());
             image.setImageBitmap(preview.bitmap);
             fileBody.addView(image, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
         } else if (preview.text != null && !preview.text.isEmpty()) {
@@ -387,6 +428,10 @@ final class RemoteBrowserView extends LinearLayout {
         }
     }
 
+    private String imageDescription() {
+        return getContext().getString(R.string.remote_preview_of, visibleLabel(selectedFile.name));
+    }
+
     private int dp(int pixels) {
         return Math.round(pixels * getResources().getDisplayMetrics().density);
     }
@@ -394,6 +439,13 @@ final class RemoteBrowserView extends LinearLayout {
     private static String visibleLabel(String value) {
         // Paths and server messages stay on one line and cannot reorder adjacent UI text.
         return LABEL_CONTROLS.matcher(value).replaceAll("\uFFFD");
+    }
+
+    private String entryLabel(RemoteConnection.FileEntry entry) {
+        String name = visibleLabel(entry.name);
+        if (entry.directory) return name + "/";
+        if (entry.symbolicLink) return getContext().getString(R.string.remote_link_name, name);
+        return name;
     }
 
     private static final class DirectoryListing {
@@ -409,9 +461,9 @@ final class RemoteBrowserView extends LinearLayout {
     private static final class Preview {
         final Bitmap bitmap;
         final String text;
-        final String status;
+        final Function<Context, String> status;
 
-        Preview(Bitmap bitmap, String text, String status) {
+        Preview(Bitmap bitmap, String text, Function<Context, String> status) {
             this.bitmap = bitmap;
             this.text = text;
             this.status = status;
@@ -441,8 +493,7 @@ final class RemoteBrowserView extends LinearLayout {
             RemoteConnection.FileEntry entry = getItem(position);
             row.setCompoundDrawablesRelativeWithIntrinsicBounds(
                     entry.directory ? R.drawable.ic_folder : R.drawable.ic_file, 0, 0, 0);
-            String suffix = entry.directory ? "/" : entry.symbolicLink ? " (link)" : "";
-            row.setText(visibleLabel(entry.name) + suffix);
+            row.setText(entryLabel(entry));
             return row;
         }
     }

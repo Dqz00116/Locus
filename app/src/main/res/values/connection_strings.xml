@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connection_action_connect">Connect</string>
+    <string name="connection_section_method">Connection method</string>
+    <string name="connection_route_direct">Direct SSH</string>
+    <string name="connection_route_frp" translatable="false">FRP STCP</string>
+    <string name="connection_label_host">Host or IP address</string>
+    <string name="connection_label_port">Port</string>
+    <string name="connection_import_frp_profile">Import FRP profile</string>
+    <string name="connection_replace_frp_profile">Replace FRP profile</string>
+    <string name="connection_forget_frp_profile">Forget profile</string>
+    <string name="connection_saved_frp_profile">Saved FRP profile</string>
+    <string name="connection_reading_frp_profile">Reading FRP profile…</string>
+    <string name="connection_section_ssh_login">SSH login</string>
+    <string name="connection_label_ssh_username">SSH username</string>
+    <string name="connection_username_options">Options</string>
+    <string name="connection_username_options_description">SSH username options</string>
+    <string name="connection_auth_password">Password</string>
+    <string name="connection_auth_key">SSH key</string>
+    <string name="connection_choose_ssh_key">Choose SSH key</string>
+    <string name="connection_change_ssh_key">Change SSH key</string>
+    <string name="connection_use_saved_ssh_key">Use saved key</string>
+    <string name="connection_using_saved_ssh_key">Using saved SSH key</string>
+    <string name="connection_forget_saved_ssh_key">Forget saved key</string>
+    <string name="connection_ssh_key_selected">SSH key selected</string>
+    <string name="connection_replace_encrypted_ssh_key">Replace the encrypted SSH key saved on this tablet</string>
+    <string name="connection_save_encrypted_ssh_key">Save an encrypted copy of this SSH key on this tablet</string>
+    <string name="connection_label_ssh_password">SSH password</string>
+    <string name="connection_label_key_passphrase">SSH key passphrase (optional)</string>
+    <string name="connection_using_saved_password">Using saved SSH password</string>
+    <string name="connection_using_saved_key_passphrase">Using saved key passphrase</string>
+    <string name="connection_enter_manually">Enter manually</string>
+    <string name="connection_use_saved_password">Use saved password</string>
+    <string name="connection_use_saved_passphrase">Use saved passphrase</string>
+    <string name="connection_forget_saved_password">Forget saved password</string>
+    <string name="connection_forget_saved_passphrase">Forget saved passphrase</string>
+    <string name="connection_remember_password">Remember SSH password on this tablet</string>
+    <string name="connection_remember_passphrase">Remember key passphrase on this tablet</string>
+    <string name="connection_import_ssh_username">Import username from OpenSSH config…</string>
+    <string name="connection_import_ssh_config">Import from OpenSSH config…</string>
+    <string name="connection_ssh_alias">SSH alias %1$s</string>
+    <string name="connection_error_frp_profile_required">Import an FRP profile to connect via STCP.</string>
+    <string name="connection_error_host_required">Enter an SSH host</string>
+    <string name="connection_error_port">Enter a port from %1$d to %2$d</string>
+    <string name="connection_error_username_required">Enter an SSH username</string>
+    <string name="connection_error_key_required">Choose an SSH private key to continue.</string>
+</resources>

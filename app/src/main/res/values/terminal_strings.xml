@@ -1,5 +1,8 @@
 <resources>
-  <string name="paste_text">Paste</string>
-  <string name="copy_text">Copy</string>
-  <string name="text_selection_more">More…</string>
+    <string name="paste_text">Paste</string>
+    <string name="copy_text">Copy</string>
+    <string name="text_selection_more">More…</string>
+    <string name="terminal_selection_too_large">Selection is too large to copy.</string>
+    <string name="terminal_paste_limit">Paste is limited to %1$,d characters.</string>
+    <string name="terminal_clip_label">Terminal selection</string>
 </resources>

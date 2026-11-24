@@ -1,5 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name" translatable="false">Locus</string>
+    <string name="workspace_actions">Workspace actions</string>
+    <string name="app_language">Language</string>
+    <string name="app_language_system">Follow system</string>
+    <string name="app_language_english" translatable="false">English</string>
+    <string name="app_language_simplified_chinese" translatable="false">简体中文</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="workspace_new_window">New window</string>
+    <string name="workspace_window_options">Window options</string>
+    <string name="workspace_terminal_number">Terminal window %1$d</string>
+    <string name="workspace_mount_above">Add window above</string>
+    <string name="workspace_mount_below">Add window below</string>
+    <string name="workspace_mount_left">Add window left</string>
+    <string name="workspace_mount_right">Add window right</string>
+    <string name="workspace_split_options">Split options. Tap for window actions, or drag to resize.</string>
+    <string name="workspace_choose_directory">Choose directory</string>
+    <string name="workspace_choose_directory_prompt">Choose a remote directory</string>
+    <string name="workspace_connect_prompt">Connect to an SSH host</string>
+    <string name="workspace_browse">Browse files</string>
+    <string name="workspace_keyboard">Keyboard</string>
+    <string name="workspace_close_window">Close window</string>
+    <string name="workspace_close_window_title">Close window?</string>
+    <string name="workspace_close_window_message">This closes the active SSH terminal channel in this window.</string>
+    <string name="workspace_open_shell">Open shell</string>
+    <string name="workspace_open_shell_title">Open a new shell in this window?</string>
+    <string name="workspace_open_shell_message">The current SSH terminal channel will close.</string>
+    <string name="workspace_shell_opening">Opening shell…</string>
+    <string name="workspace_shell_active">Shell active</string>
+    <string name="workspace_shell_exit">Shell exited (%1$d)</string>
+    <string name="workspace_terminal_stopped">Terminal stopped. %1$s</string>
+    <string name="workspace_terminal_closed">SSH terminal closed</string>
+    <string name="workspace_ssh_disconnected">SSH disconnected</string>
+    <string name="workspace_input_limit">Input exceeds %1$d KiB.</string>
+    <string name="workspace_send_queue_full">Terminal send queue is full. Try again.</string>
     <string name="mount_hint">Tap a highlighted edge to place the new window.</string>
     <string name="restore_mount_hint">Tap a highlighted edge to restore the window.</string>
     <string name="minimize_window">Minimize</string>

@@ -35,8 +35,11 @@ import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.textselection.TextSelectionCursorController;
 
+import dev.locus.app.R;
+
 /** View displaying and interacting with a {@link TerminalSession}. */
 public class TerminalView extends View {
+    private static final int PASTE_CHARACTER_LIMIT = 16_384;
 
     /** Log terminal view key and IME events. */
     private static boolean TERMINAL_VIEW_KEY_LOGGING_ENABLED = false;
@@ -498,11 +501,15 @@ public class TerminalView extends View {
 
     public void copyTextToClipboard(String selectedText) {
         if (selectedText.length() > 65_536) {
-            android.widget.Toast.makeText(getContext(), "Selection is too large to copy.", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(getContext(), R.string.terminal_selection_too_large,
+                    android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
         ClipboardManager clipboard = getContext().getSystemService(ClipboardManager.class);
-        if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("Terminal selection", selectedText));
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText(
+                    getContext().getString(R.string.terminal_clip_label), selectedText));
+        }
     }
 
     public void pasteFromClipboard() {
@@ -516,8 +523,10 @@ public class TerminalView extends View {
 
     protected void pasteText(CharSequence text) {
         if (mEmulator == null) return;
-        if (text.length() > 16_384) {
-            android.widget.Toast.makeText(getContext(), "Paste is limited to 16,384 characters.", android.widget.Toast.LENGTH_SHORT).show();
+        if (text.length() > PASTE_CHARACTER_LIMIT) {
+            android.widget.Toast.makeText(getContext(),
+                    getContext().getString(R.string.terminal_paste_limit, PASTE_CHARACTER_LIMIT),
+                    android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
         mEmulator.paste(text.toString());

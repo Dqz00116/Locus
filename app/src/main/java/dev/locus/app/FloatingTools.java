@@ -210,6 +210,13 @@ final class FloatingTools {
         }
     }
 
+    static void refreshLocale(View button) {
+        if (Build.VERSION.SDK_INT >= 30 && button.getTag() instanceof Trigger) {
+            Trigger trigger = (Trigger) button.getTag();
+            button.setStateDescription(trigger.dockedDescription());
+        }
+    }
+
     void compactRow() {
         compact = true;
         actions.setOrientation(LinearLayout.HORIZONTAL);

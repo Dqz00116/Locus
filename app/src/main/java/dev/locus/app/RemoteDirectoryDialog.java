@@ -96,14 +96,14 @@ final class RemoteDirectoryDialog {
         });
         activity.addIconAction(navigation, R.drawable.ic_home,
                 activity.getString(R.string.remote_home_folder), view -> open("~"));
-        retry = activity.addAction(navigation, "Retry", () -> open(requested));
+        retry = activity.addAction(navigation, activity.getString(R.string.remote_retry), () -> open(requested));
         content.addView(navigation);
 
         filter = new EditText(activity);
         filter.setSingleLine(true);
         filter.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         filter.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        filter.setHint("Filter folders here");
+        filter.setHint(R.string.remote_filter_folders);
         filter.setTextSize(15);
         filter.setTextColor(activity.getColor(R.color.text_primary));
         filter.setHintTextColor(activity.getColor(R.color.text_secondary));
@@ -153,10 +153,10 @@ final class RemoteDirectoryDialog {
         });
 
         dialog = new AlertDialog.Builder(activity)
-                .setTitle("Choose remote directory")
+                .setTitle(R.string.remote_choose_directory)
                 .setView(content)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Use this directory", null)
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.remote_use_directory, null)
                 .create();
         dialog.setOnDismissListener(ignored -> cancelRequest());
         dialog.show();
@@ -189,7 +189,7 @@ final class RemoteDirectoryDialog {
         retry.setVisibility(View.GONE);
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
         pathLabel.setText(label(path));
-        status.setText("Loading remote folders…");
+        status.setText(R.string.remote_loading_folders);
         try {
             request = io.submit(() -> {
                 if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, DiagnosticLog.Outcome.STARTED);
@@ -205,8 +205,7 @@ final class RemoteDirectoryDialog {
                     entries.sort(Comparator.comparing((RemoteConnection.FileEntry entry) -> entry.name,
                                     String.CASE_INSENSITIVE_ORDER).thenComparing(entry -> entry.name));
                 } catch (IOException failure) {
-                    error = failure.getMessage();
-                    if (error == null || error.trim().isEmpty()) error = "The remote operation failed.";
+                    error = UiErrors.message(activity, failure);
                 }
                 if (Thread.currentThread().isInterrupted()) return;
                 if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, error == null
@@ -222,7 +221,7 @@ final class RemoteDirectoryDialog {
             });
         } catch (RejectedExecutionException unavailable) {
             if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, DiagnosticLog.Outcome.FAILED);
-            loaded(null, Collections.emptyList(), "File operations are unavailable.");
+            loaded(null, Collections.emptyList(), activity.getString(R.string.remote_operations_unavailable));
         }
     }
 
@@ -238,7 +237,8 @@ final class RemoteDirectoryDialog {
         if (error == null) {
             applyFilter();
         } else {
-            status.setText((path == null ? "Could not open folder. " : "Could not list folders. ") + label(error));
+            status.setText(activity.getString(path == null
+                    ? R.string.remote_open_folder_failed : R.string.remote_list_folders_failed, error));
         }
     }
 
@@ -251,10 +251,10 @@ final class RemoteDirectoryDialog {
         adapter.notifyDataSetChanged();
         listing.setSelection(0);
         if (visibleFolders.isEmpty()) {
-            status.setText(query.isEmpty() ? "No subfolders." : "No matching folders here.");
+            status.setText(query.isEmpty() ? R.string.remote_no_subfolders : R.string.remote_no_matching_folders);
         } else {
             int count = visibleFolders.size();
-            status.setText(count == 1 ? "1 result" : count + " results");
+            status.setText(activity.getResources().getQuantityString(R.plurals.remote_folder_results, count, count));
         }
     }
 
@@ -297,7 +297,8 @@ final class RemoteDirectoryDialog {
                 row.setTextDirection(View.TEXT_DIRECTION_LTR);
             }
             RemoteConnection.FileEntry entry = getItem(position);
-            row.setText(label(entry.name) + (entry.symbolicLink ? " (link)" : "/"));
+            String name = label(entry.name);
+            row.setText(entry.symbolicLink ? activity.getString(R.string.remote_link_name, name) : name + "/");
             return row;
         }
     }

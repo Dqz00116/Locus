@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connection_action_connect">连接</string>
+    <string name="connection_section_method">连接方式</string>
+    <string name="connection_route_direct">直连 SSH</string>
+    <string name="connection_label_host">主机名或 IP 地址</string>
+    <string name="connection_label_port">端口</string>
+    <string name="connection_import_frp_profile">导入 FRP 配置</string>
+    <string name="connection_replace_frp_profile">替换 FRP 配置</string>
+    <string name="connection_forget_frp_profile">移除配置</string>
+    <string name="connection_saved_frp_profile">已保存的 FRP 配置</string>
+    <string name="connection_reading_frp_profile">正在读取 FRP 配置…</string>
+    <string name="connection_section_ssh_login">SSH 登录</string>
+    <string name="connection_label_ssh_username">SSH 用户名</string>
+    <string name="connection_username_options">选项</string>
+    <string name="connection_username_options_description">SSH 用户名选项</string>
+    <string name="connection_auth_password">密码</string>
+    <string name="connection_auth_key">SSH 密钥</string>
+    <string name="connection_choose_ssh_key">选择 SSH 密钥</string>
+    <string name="connection_change_ssh_key">更换 SSH 密钥</string>
+    <string name="connection_use_saved_ssh_key">使用已保存的密钥</string>
+    <string name="connection_using_saved_ssh_key">当前使用已保存的 SSH 密钥</string>
+    <string name="connection_forget_saved_ssh_key">移除已保存的密钥</string>
+    <string name="connection_ssh_key_selected">已选择 SSH 密钥</string>
+    <string name="connection_replace_encrypted_ssh_key">替换此设备上加密保存的 SSH 密钥</string>
+    <string name="connection_save_encrypted_ssh_key">将此 SSH 密钥的副本加密保存到此设备</string>
+    <string name="connection_label_ssh_password">SSH 密码</string>
+    <string name="connection_label_key_passphrase">SSH 密钥口令（可选）</string>
+    <string name="connection_using_saved_password">当前使用已保存的 SSH 密码</string>
+    <string name="connection_using_saved_key_passphrase">当前使用已保存的密钥口令</string>
+    <string name="connection_enter_manually">手动输入</string>
+    <string name="connection_use_saved_password">使用已保存的密码</string>
+    <string name="connection_use_saved_passphrase">使用已保存的口令</string>
+    <string name="connection_forget_saved_password">移除已保存的密码</string>
+    <string name="connection_forget_saved_passphrase">移除已保存的口令</string>
+    <string name="connection_remember_password">在此设备上记住 SSH 密码</string>
+    <string name="connection_remember_passphrase">在此设备上记住密钥口令</string>
+    <string name="connection_import_ssh_username">从 OpenSSH 配置导入用户名…</string>
+    <string name="connection_import_ssh_config">从 OpenSSH 配置导入…</string>
+    <string name="connection_ssh_alias">SSH 别名 %1$s</string>
+    <string name="connection_error_frp_profile_required">请先导入 FRP 配置，再通过 STCP 连接。</string>
+    <string name="connection_error_host_required">请输入 SSH 主机</string>
+    <string name="connection_error_port">请输入 %1$d 至 %2$d 之间的端口号</string>
+    <string name="connection_error_username_required">请输入 SSH 用户名</string>
+    <string name="connection_error_key_required">请选择 SSH 私钥后继续。</string>
+</resources>

@@ -1,5 +1,7 @@
 package dev.locus.app;
 
+import dev.locus.app.OperationException.Reason;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -91,7 +93,8 @@ final class SavedSshConnection {
                     json.getBoolean("needsSecret"), !secret.isEmpty());
             return new Record(profile, secret);
         } catch (JSONException malformed) {
-            throw new IOException("Could not read the saved connection. Open Connection setup to configure it again.");
+            throw new OperationException(Reason.SAVED_CONNECTION_READ_FAILED,
+                    "Could not read the saved connection. Open Connection setup to configure it again.");
         } finally {
             Arrays.fill(payload, (byte) 0);
         }
@@ -116,7 +119,7 @@ final class SavedSshConnection {
                 Arrays.fill(payload, (byte) 0);
             }
         } catch (JSONException malformed) {
-            throw new IOException("Could not save this connection.");
+            throw new OperationException(Reason.SAVED_CONNECTION_WRITE_FAILED, "Could not save this connection.");
         }
     }
 

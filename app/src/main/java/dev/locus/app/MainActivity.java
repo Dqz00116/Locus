@@ -7,12 +7,15 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.LocaleList;
 import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.text.InputFilter;
@@ -32,11 +35,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.jcraft.jsch.JSchAlgoNegoFailException;
-import com.jcraft.jsch.JSchException;
 
 import dev.locus.app.ConnectionDialog.AuthMode;
 import dev.locus.app.DiagnosticLog.Outcome;
 import dev.locus.app.DiagnosticLog.Stage;
+import dev.locus.app.OperationException.Reason;
 
 import java.io.File;
 import java.io.IOException;
@@ -65,6 +68,9 @@ public final class MainActivity extends Activity {
     private ImageButton workspaceTray;
     private View mountGuide;
     private TextView mountInstruction;
+    private Button cancelMount;
+    private volatile Resources legacyLanguageResources;
+    private LocaleList displayedLocales;
     private Selection selection = Selection.NONE;
     private List<View> minimizeTargets = Collections.emptyList();
     private boolean freeFloating;
@@ -88,13 +94,19 @@ public final class MainActivity extends Activity {
     private LocalCredentials credentials;
     private boolean importingProfile;
     private boolean connecting;
-    private String connectionProgress;
+    private int connectionProgress;
     private volatile boolean destroyed;
     private int nextPaneId = 1;
 
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        if (Build.VERSION.SDK_INT < 33) {
+            legacyLanguageResources = AppLanguage.legacyResources(getBaseContext());
+        } else {
+            AppLanguage.migrateLegacyChoice(this);
+        }
+        displayedLocales = getResources().getConfiguration().getLocales();
         credentials = new LocalCredentials(this);
         diagnostics = DiagnosticLog.get(this);
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
@@ -108,7 +120,7 @@ public final class MainActivity extends Activity {
         workspaceSize.setMargins(dp(6), dp(6), dp(6), dp(6));
         root.addView(dock, workspaceSize);
 
-        workspaceTray = LocusChrome.iconAction(this, R.drawable.ic_settings, "Workspace actions");
+        workspaceTray = LocusChrome.iconAction(this, R.drawable.ic_settings, getString(R.string.workspace_actions));
         FloatingTools.bindTrigger(workspaceTray, root, true, freeFloating, () -> showWorkspaceActions(workspaceTray));
         FrameLayout.LayoutParams traySize = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.LEFT);
         root.addView(workspaceTray, traySize);
@@ -119,6 +131,35 @@ public final class MainActivity extends Activity {
         setContentView(root);
         addInitialWindow();
         loadSavedConnection();
+    }
+
+    @Override
+    public Resources getResources() {
+        Resources localized = legacyLanguageResources;
+        return localized == null ? super.getResources() : localized;
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        if (Build.VERSION.SDK_INT < 33) {
+            legacyLanguageResources = AppLanguage.legacyResources(getBaseContext());
+        }
+        refreshLocale();
+    }
+
+    private void refreshLocale() {
+        LocaleList locales = getResources().getConfiguration().getLocales();
+        if (workspaceTray == null || locales.equals(displayedLocales)) return;
+        displayedLocales = locales;
+        LocusChrome.labelIcon(workspaceTray, getString(R.string.workspace_actions));
+        FloatingTools.refreshLocale(workspaceTray);
+        shelf.refreshLocale();
+        dock.refreshLocale();
+        updateMountInstruction();
+        cancelMount.setText(getText(R.string.action_cancel));
+        for (WorkspacePane pane : panes) pane.refreshLocale();
+        for (WorkspacePane pane : minimized) pane.refreshLocale();
     }
 
     private void addInitialWindow() {
@@ -191,7 +232,7 @@ public final class MainActivity extends Activity {
         mountInstruction.setTextSize(14);
         mountInstruction.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         guide.addView(mountInstruction, new LinearLayout.LayoutParams(0, -2, 1));
-        addAction(guide, getString(android.R.string.cancel), () -> setSelection(Selection.NONE));
+        cancelMount = addAction(guide, getString(R.string.action_cancel), () -> setSelection(Selection.NONE));
         FrameLayout.LayoutParams size = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         size.topMargin = dp(64);
         size.leftMargin = size.rightMargin = dp(10);
@@ -209,13 +250,17 @@ public final class MainActivity extends Activity {
         if (next != Selection.MINIMIZE) minimizeTargets = Collections.emptyList();
         dock.setMountTargeting(selecting);
         workspaceTray.setVisibility(selecting ? View.INVISIBLE : View.VISIBLE);
-        mountInstruction.setText(next == Selection.MINIMIZE ? R.string.select_minimize_hint
-                : restoring == null ? R.string.mount_hint : R.string.restore_mount_hint);
+        updateMountInstruction();
         mountGuide.setVisibility(selecting ? View.VISIBLE : View.GONE);
         shelf.update(minimized, selecting);
         updateDockControls();
         if (selecting) mountGuide.requestFocus();
         else if (activePane != null) activePane.focus();
+    }
+
+    private void updateMountInstruction() {
+        mountInstruction.setText(getText(selection == Selection.MINIMIZE ? R.string.select_minimize_hint
+                : restoring == null ? R.string.mount_hint : R.string.restore_mount_hint));
     }
 
     @Override
@@ -234,10 +279,10 @@ public final class MainActivity extends Activity {
     void closePane(WorkspacePane pane) {
         if (pane.hasLiveTerminal()) {
             new AlertDialog.Builder(this)
-                    .setTitle("Close window?")
-                    .setMessage("This will close its active SSH terminal channel.")
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Close window", (dialog, which) -> removePane(pane))
+                    .setTitle(R.string.workspace_close_window_title)
+                    .setMessage(R.string.workspace_close_window_message)
+                    .setNegativeButton(R.string.action_cancel, null)
+                    .setPositiveButton(R.string.workspace_close_window, (dialog, which) -> removePane(pane))
                     .show();
         } else {
             removePane(pane);
@@ -259,7 +304,7 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.rename_window)
                 .setView(field)
-                .setNegativeButton(android.R.string.cancel, null)
+                .setNegativeButton(R.string.action_cancel, null)
                 .setPositiveButton(R.string.save_window_name, (view, which) -> pane.setShelfName(name.getText().toString()))
                 .show();
         LocusChrome.fitForm(dialog);
@@ -302,7 +347,8 @@ public final class MainActivity extends Activity {
     private void showSplitMenu(View anchor, List<View> candidates) {
         FloatingTools menu = new FloatingTools(anchor);
         menu.compactRow();
-        menu.add(R.drawable.ic_add, "New window", canCreateWindow(), () -> setSelection(Selection.PLACE));
+        menu.add(R.drawable.ic_add, getString(R.string.workspace_new_window), canCreateWindow(),
+                () -> setSelection(Selection.PLACE));
         menu.add(R.drawable.ic_minimize, getString(R.string.minimize_window), true, () -> {
             minimizeTargets = candidates;
             setSelection(Selection.MINIMIZE);
@@ -314,17 +360,42 @@ public final class MainActivity extends Activity {
         WorkspacePane pane = selectedPane();
         FloatingTools menu = new FloatingTools(anchor);
         boolean connected = hasConnection();
-        String connectLabel = connected ? "Disconnect SSH" : connecting ? connectionProgress : "Connect";
+        String connectLabel = getString(connecting ? connectionProgress : connected
+                ? R.string.connection_action_disconnect : R.string.connection_action_connect);
         menu.addLabeled(connected ? R.drawable.ic_disconnect : R.drawable.ic_connect, connectLabel,
                 !connecting && !loadingConnection, () -> connectionClicked(pane));
         if (!connected && (hasDraft || savedConnection != null)) {
-            menu.addLabeled(R.drawable.ic_settings, "Connection setup", !connecting && !loadingConnection,
+            menu.addLabeled(R.drawable.ic_settings, getString(R.string.connection_setup), !connecting && !loadingConnection,
                     () -> configureConnection(pane));
         }
-        menu.addLabeled(R.drawable.ic_add, "New window", canCreateWindow(), () -> setSelection(Selection.PLACE));
+        menu.addLabeled(R.drawable.ic_add, getString(R.string.workspace_new_window), canCreateWindow(),
+                () -> setSelection(Selection.PLACE));
         menu.addLabeled(R.drawable.ic_move, getString(freeFloating
                 ? R.string.disable_free_floating : R.string.enable_free_floating), true, this::toggleFreeFloating);
+        menu.addLabeled(R.drawable.ic_language, getString(R.string.app_language), true, this::chooseLanguage);
         menu.show();
+    }
+
+    private void chooseLanguage() {
+        AppLanguage current = AppLanguage.current(this);
+        AppLanguage[] languages = AppLanguage.values();
+        CharSequence[] labels = new CharSequence[languages.length];
+        for (int index = 0; index < labels.length; index++) {
+            labels[index] = getText(languages[index].label);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.app_language)
+                .setSingleChoiceItems(labels, current.ordinal(), (dialog, which) -> {
+                    dialog.dismiss();
+                    AppLanguage chosen = languages[which];
+                    chosen.apply(this);
+                    if (Build.VERSION.SDK_INT < 33) {
+                        legacyLanguageResources = AppLanguage.legacyResources(getBaseContext());
+                        refreshLocale();
+                    }
+                })
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
     }
 
     boolean freeFloating() {
@@ -343,10 +414,10 @@ public final class MainActivity extends Activity {
     private void connectionClicked(WorkspacePane pane) {
         if (hasConnection()) {
             new AlertDialog.Builder(this)
-                    .setTitle("Disconnect from SSH?")
-                    .setMessage("This closes the SSH channels in all open windows.")
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Disconnect", (dialog, which) -> disconnect())
+                    .setTitle(R.string.connection_disconnect_title)
+                    .setMessage(R.string.connection_disconnect_message)
+                    .setNegativeButton(R.string.action_cancel, null)
+                    .setPositiveButton(R.string.connection_disconnect_confirm, (dialog, which) -> disconnect())
                     .show();
         } else {
             connectOrConfigure(pane, false);
@@ -455,7 +526,7 @@ public final class MainActivity extends Activity {
 
     private void refreshConnection() {
         boolean connected = hasConnection();
-        String progress = connecting ? connectionProgress : null;
+        int progress = connecting ? connectionProgress : 0;
         boolean canReconnect = !connected && !loadingConnection && reusableConnection() != null;
         for (WorkspacePane pane : panes) pane.updateConnection(connected, progress, canReconnect);
         for (WorkspacePane pane : minimized) pane.updateConnection(connected, progress, canReconnect);
@@ -509,10 +580,10 @@ public final class MainActivity extends Activity {
                     if (connection != current || !panes.contains(pane)) return;
                     if (pane.hasLiveTerminal()) {
                         new AlertDialog.Builder(this)
-                                .setTitle("Open a new shell in this pane?")
-                                .setMessage("The current SSH terminal channel will close.")
-                                .setNegativeButton("Cancel", null)
-                                .setPositiveButton("Open shell",
+                                .setTitle(R.string.workspace_open_shell_title)
+                                .setMessage(R.string.workspace_open_shell_message)
+                                .setNegativeButton(R.string.action_cancel, null)
+                                .setPositiveButton(R.string.workspace_open_shell,
                                         (dialog, which) -> openShell(pane, current, directory))
                                 .show();
                     } else {
@@ -585,7 +656,7 @@ public final class MainActivity extends Activity {
             startActivityForResult(picker, requestCode);
         } catch (ActivityNotFoundException unavailable) {
             pendingPicker = null;
-            toast("Android's file picker is unavailable.");
+            toast(getString(R.string.connection_picker_unavailable));
         }
     }
 
@@ -626,20 +697,20 @@ public final class MainActivity extends Activity {
         } catch (RuntimeException ignored) {
             // A file provider may omit metadata. The temporary content grant is still usable.
         }
-        return "Selected SSH key";
+        return getString(R.string.connection_ssh_key_selected);
     }
 
     private void importSshConfig(ConnectionDialog form, Uri uri) {
         io.execute(() -> {
             byte[] config = null;
             try {
-                config = readDocument(uri, OpenSshConfig.MAX_BYTES, "OpenSSH config");
+                config = readDocument(uri, OpenSshConfig.MAX_BYTES);
                 List<OpenSshConfig.Entry> entries = OpenSshConfig.parse(config);
                 main.post(() -> chooseSshAlias(form, entries));
             } catch (IOException failure) {
                 main.post(() -> {
                     if (!destroyed && form.isShowing()) {
-                        showError("Could not import SSH config", failure.getMessage());
+                        showError(R.string.connection_import_ssh_failed, UiErrors.message(this, failure));
                     }
                 });
             } finally {
@@ -656,8 +727,7 @@ public final class MainActivity extends Activity {
             if (!frp || !TextUtils.isEmpty(entry.username)) choices.add(entry);
         }
         if (choices.isEmpty()) {
-            showError("No SSH usernames in this file",
-                    "Choose an OpenSSH config with a User setting or enter the SSH username directly.");
+            showError(R.string.connection_config_no_user_title, getString(R.string.connection_config_no_user_message));
             return;
         }
         String[] labels = new String[choices.size()];
@@ -665,17 +735,16 @@ public final class MainActivity extends Activity {
             labels[index] = choices.get(index).alias;
         }
         new AlertDialog.Builder(this)
-                .setTitle("Choose an SSH host alias")
+                .setTitle(R.string.connection_choose_host_alias)
                 .setItems(labels, (dialog, index) -> {
                     OpenSshConfig.Entry entry = choices.get(index);
                     if (!frp && entry.requiresProxy) {
-                        showError("SSH alias uses a proxy",
-                                "Choose a directly reachable SSH alias, or select your FRP profile first.");
+                        showError(R.string.connection_alias_proxy_title, getString(R.string.connection_alias_proxy_message));
                     } else {
                         form.applySshAlias(entry.alias, entry.hostName, entry.port, entry.username);
                     }
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton(R.string.action_cancel, null)
                 .show();
     }
 
@@ -686,14 +755,16 @@ public final class MainActivity extends Activity {
         io.execute(() -> {
             byte[] config = null;
             try {
-                config = readDocument(uri, FrpRoute.MAX_CONFIG_BYTES, "FRP profile");
+                config = readDocument(uri, FrpRoute.MAX_CONFIG_BYTES);
                 List<FrpRoute.Choice> choices = FrpRoute.inspect(config);
-                if (choices.isEmpty()) throw new IOException("The profile has no enabled STCP visitors.");
+                if (choices.isEmpty()) {
+                    throw new OperationException(Reason.FRP_PROFILE_NEEDS_VISITOR, "No enabled STCP visitors.");
+                }
                 byte[] imported = config;
                 main.post(() -> chooseFrpVisitor(form, imported, choices));
                 config = null;
             } catch (Exception failure) {
-                main.post(() -> finishFrpImport(form, null, WorkspacePane.errorMessage(failure)));
+                main.post(() -> finishFrpImport(form, null, failure));
             } finally {
                 clearBytes(config);
             }
@@ -716,12 +787,12 @@ public final class MainActivity extends Activity {
         }
         boolean[] submitted = {false};
         AlertDialog picker = new AlertDialog.Builder(this)
-                .setTitle("Choose an STCP visitor for SSH")
+                .setTitle(R.string.connection_choose_stcp_visitor)
                 .setItems(labels, (dialog, index) -> {
                     submitted[0] = true;
                     saveFrpProfile(form, config, choices.get(index));
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton(R.string.action_cancel, null)
                 .create();
         picker.setOnDismissListener(dialog -> {
             if (!submitted[0]) {
@@ -743,7 +814,7 @@ public final class MainActivity extends Activity {
                     finishFrpImport(form, choice, null);
                 });
             } catch (Exception failure) {
-                main.post(() -> finishFrpImport(form, null, WorkspacePane.errorMessage(failure)));
+                main.post(() -> finishFrpImport(form, null, failure));
             } finally {
                 clearBytes(config);
                 clearBytes(selected);
@@ -751,12 +822,12 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void finishFrpImport(ConnectionDialog form, FrpRoute.Choice choice, String failure) {
+    private void finishFrpImport(ConnectionDialog form, FrpRoute.Choice choice, Exception failure) {
         importingProfile = false;
         if (destroyed || !form.isShowing()) return;
         if (choice != null) form.setFrpProfile(choice, true);
         form.setFrpImportPending(false);
-        if (failure != null) showError("Could not import FRP profile", failure);
+        if (failure != null) showError(R.string.connection_import_frp_failed, UiErrors.message(this, failure));
     }
 
     private void forgetCredential(ConnectionDialog form, LocalCredentials.Slot slot) {
@@ -781,7 +852,9 @@ public final class MainActivity extends Activity {
                 });
             } catch (IOException failure) {
                 main.post(() -> {
-                    if (!destroyed && form.isShowing()) showError("Could not remove saved file", failure.getMessage());
+                    if (!destroyed && form.isShowing()) {
+                        showError(R.string.connection_remove_saved_file_failed, UiErrors.message(this, failure));
+                    }
                 });
             }
         });
@@ -801,13 +874,13 @@ public final class MainActivity extends Activity {
                 main.post(() -> {
                     if (destroyed || !form.isShowing()) return;
                     form.setSavedSecretPresent(passphrase, true);
-                    showError("Could not forget saved login", failure.getMessage());
+                    showError(R.string.connection_forget_login_failed, UiErrors.message(this, failure));
                 });
             }
         });
     }
 
-    private byte[] readDocument(Uri uri, int limit, String label) throws IOException {
+    private byte[] readDocument(Uri uri, int limit) throws IOException {
         byte[] buffer = new byte[limit + 1];
         try {
             int length = 0;
@@ -820,10 +893,10 @@ public final class MainActivity extends Activity {
                     length += count;
                 }
             } catch (IOException | RuntimeException failure) {
-                throw new IOException("Could not read the selected " + label + ".");
+                throw new OperationException(Reason.DOCUMENT_READ_FAILED, "Could not read the selected document.", failure);
             }
             if (length == 0 || length > limit) {
-                throw new IOException("Choose a nonempty " + label + " up to " + limit / 1024 + " KiB.");
+                throw new OperationException(Reason.DOCUMENT_SIZE, limit / 1024, "The document is empty or too large.");
             }
             return Arrays.copyOf(buffer, length);
         } finally {
@@ -852,7 +925,7 @@ public final class MainActivity extends Activity {
         if (direct != null) draft.putString("host", direct.host).putInt("port", direct.port);
         draft.apply();
         connecting = true;
-        connectionProgress = getString(request.frp ? R.string.starting_frp : R.string.connecting_ssh);
+        connectionProgress = request.frp ? R.string.starting_frp : R.string.connecting_ssh;
         refreshConnection();
         File pins = new File(getFilesDir(), "ssh-host-pins");
         DiagnosticLog.Trace trace = diagnostics.begin(
@@ -877,10 +950,10 @@ public final class MainActivity extends Activity {
             if (request.authMode == AuthMode.KEY) {
                 if (savedKey) {
                     key = credentials.read(LocalCredentials.Slot.SSH_PRIVATE_KEY);
-                    if (key == null) throw new IOException("Choose an SSH key again.");
+                    if (key == null) throw new OperationException(Reason.SSH_KEY_REQUIRED, "Saved SSH key is missing.");
                 } else {
-                    if (request.keyUri == null) throw new IOException("Choose an SSH private key.");
-                    key = readDocument(request.keyUri, SshConnection.MAX_PRIVATE_KEY_BYTES, "SSH key");
+                    if (request.keyUri == null) throw new OperationException(Reason.SSH_KEY_REQUIRED, "No SSH key selected.");
+                    key = readDocument(request.keyUri, SshConnection.MAX_PRIVATE_KEY_BYTES);
                     if (request.saveKey) keyToSave = key.clone();
                 }
             }
@@ -888,21 +961,25 @@ public final class MainActivity extends Activity {
             String endpoint = direct == null ? "" : direct.endpoint();
             if (request.frp) {
                 frpConfig = credentials.read(LocalCredentials.Slot.FRP_PROFILE);
-                if (frpConfig == null) throw new IOException("Import an FRP profile first.");
+                if (frpConfig == null) {
+                    throw new OperationException(Reason.FRP_PROFILE_REQUIRED, "Saved FRP profile is missing.");
+                }
                 List<FrpRoute.Choice> choices = FrpRoute.inspect(frpConfig);
-                if (choices.size() != 1) throw new IOException("Import and select one FRP visitor again.");
+                if (choices.size() != 1) {
+                    throw new OperationException(Reason.FRP_PROFILE_SELECTION_FAILED, "Expected one saved FRP visitor.");
+                }
                 FrpRoute.Choice choice = choices.get(0);
                 endpoint = choice.identity;
             }
             if (expected != null && !expected.matchesAuthentication(endpoint, request.username, keyDigest)) {
-                throw new IOException("The saved route or SSH key changed. Open Connection setup to connect.");
+                throw new OperationException(Reason.SAVED_LOGIN_MISMATCH, "The saved route or SSH key changed.");
             }
             String secret = request.secret;
             if (request.useSavedSecret) {
                 SavedSshConnection.Record stored = SavedSshConnection.read(credentials);
                 if (stored == null || !stored.profile.hasSecret
                         || !stored.profile.matchesAuthentication(endpoint, request.username, keyDigest)) {
-                    throw new IOException("The saved login does not match this route, user, or key. Open Connection setup and enter it again.");
+                    throw new OperationException(Reason.SAVED_LOGIN_MISMATCH, "Saved login does not match the connection.");
                 }
                 secret = stored.secret;
             }
@@ -916,7 +993,7 @@ public final class MainActivity extends Activity {
                 profile = new SshConnection.Profile("127.0.0.1", route.port(), request.username, endpoint);
                 main.post(() -> {
                     if (destroyed) return;
-                    connectionProgress = getString(R.string.connecting_ssh);
+                    connectionProgress = R.string.connecting_ssh;
                     refreshConnection();
                 });
             }
@@ -969,7 +1046,7 @@ public final class MainActivity extends Activity {
                 connectedUsername = request.username;
                 connecting = false;
                 refreshConnection();
-                if (warn) toast("Connected. The login could not be fully saved on this tablet.");
+                if (warn) toast(getString(R.string.connection_save_login_warning));
                 WorkspacePane selected = panes.contains(pane) ? pane : panes.get(0);
                 String recent = connectedRoute.equals(preferences.getString("directoryEndpoint", ""))
                         && request.username.equals(preferences.getString("directoryUser", ""))
@@ -990,11 +1067,11 @@ public final class MainActivity extends Activity {
                 connecting = false;
                 refreshConnection();
                 new AlertDialog.Builder(this)
-                        .setTitle("Verify SSH host")
-                        .setMessage(unknown.endpoint + "\n" + unknown.keyType + "\n" + unknown.fingerprint
-                                + "\n\nCompare the fingerprint with your server before trusting this host.")
-                        .setNegativeButton("Cancel", null)
-                        .setPositiveButton("Trust host",
+                        .setTitle(R.string.connection_verify_host)
+                        .setMessage(getString(R.string.connection_verify_host_details,
+                                unknown.endpoint, unknown.keyType, unknown.fingerprint))
+                        .setNegativeButton(R.string.action_cancel, null)
+                        .setPositiveButton(R.string.connection_trust_host,
                                 (dialog, which) -> connect(pane, request, unknown.approval, expected, reopenDirectory))
                         .show();
             });
@@ -1011,10 +1088,10 @@ public final class MainActivity extends Activity {
                 connecting = false;
                 refreshConnection();
                 new AlertDialog.Builder(this)
-                        .setTitle(request.frp ? "FRP / SSH connection failed" : "SSH connection failed")
+                        .setTitle(request.frp ? R.string.connection_frp_failed : R.string.connection_ssh_failed)
                         .setMessage(message)
-                        .setNeutralButton("Setup", (dialog, which) -> configureConnection(selectedPane()))
-                        .setPositiveButton("OK", null)
+                        .setNeutralButton(R.string.connection_setup, (dialog, which) -> configureConnection(selectedPane()))
+                        .setPositiveButton(R.string.action_ok, null)
                         .show();
             });
         } finally {
@@ -1029,11 +1106,11 @@ public final class MainActivity extends Activity {
         if (route != null && !route.failureHint().isEmpty()) return Outcome.STCP_OPEN_FAILED;
         if (failure instanceof SshConnection.ChangedHostKeyException) return Outcome.HOST_CHANGED;
         if (failure instanceof JSchAlgoNegoFailException) return Outcome.NEGOTIATION_FAILED;
-        if (FrpRoute.isSshTimeout(failure)) return Outcome.TIMEOUT;
-        String message = failure.getMessage();
-        if (failure instanceof JSchException && message != null && message.startsWith("Auth fail")) {
-            return Outcome.AUTH_REJECTED;
+        if (failure instanceof OperationException && ((OperationException) failure).reason == Reason.FRP_RELAY_TIMEOUT) {
+            return Outcome.TIMEOUT;
         }
+        if (FrpRoute.isSshTimeout(failure)) return Outcome.TIMEOUT;
+        if (UiErrors.isAuthenticationFailure(failure)) return Outcome.AUTH_REJECTED;
         return Outcome.FAILED;
     }
 
@@ -1042,14 +1119,14 @@ public final class MainActivity extends Activity {
             if (outcome == Outcome.STCP_OPEN_FAILED) return getString(R.string.frp_stcp_route_failed);
             if (outcome == Outcome.TIMEOUT) return getString(R.string.frp_ssh_response_timeout);
         }
-        return WorkspacePane.errorMessage(failure);
+        return UiErrors.message(this, failure);
     }
 
-    private void showError(String title, String message) {
+    private void showError(int title, String message) {
         new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setMessage(message)
-                .setPositiveButton("OK", null)
+                .setPositiveButton(R.string.action_ok, null)
                 .show();
     }
 

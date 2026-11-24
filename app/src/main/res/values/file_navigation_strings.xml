@@ -5,4 +5,43 @@
     <string name="remote_back_to_folder">Back to folder</string>
     <string name="remote_refresh_folder">Refresh folder</string>
     <string name="remote_reload_preview">Reload preview</string>
+    <string name="remote_retry">Retry</string>
+    <string name="remote_filter_folders">Filter folders here</string>
+    <string name="remote_choose_directory">Choose remote directory</string>
+    <string name="remote_use_directory">Use this directory</string>
+    <string name="remote_loading_folders">Loading remote folders…</string>
+    <string name="remote_operations_unavailable">File operations are unavailable.</string>
+    <string name="remote_open_folder_failed">Could not open folder. %1$s</string>
+    <string name="remote_list_folders_failed">Could not list folders. %1$s</string>
+    <string name="remote_no_subfolders">No subfolders.</string>
+    <string name="remote_no_matching_folders">No matching folders here.</string>
+    <plurals name="remote_folder_results">
+        <item quantity="one">%1$d result</item>
+        <item quantity="other">%1$d results</item>
+    </plurals>
+    <string name="remote_link_name">%1$s (link)</string>
+    <string name="remote_select_directory">Select a remote directory.</string>
+    <string name="remote_loading_directory">Loading directory…</string>
+    <string name="remote_empty_directory">Empty directory.</string>
+    <plurals name="remote_directory_entries">
+        <item quantity="one">%1$d entry</item>
+        <item quantity="other">%1$d entries</item>
+    </plurals>
+    <string name="remote_open_directory_failed">Could not open directory. %1$s</string>
+    <string name="remote_link_preview_unavailable">Symbolic link preview is unavailable.</string>
+    <string name="remote_regular_file_preview">Preview is available for regular files.</string>
+    <string name="remote_loading_preview">Loading preview…</string>
+    <string name="remote_read_file_failed">Could not read file. %1$s</string>
+    <string name="remote_image_preview_limit">Image exceeds the %1$d MiB preview limit.</string>
+    <string name="remote_unsupported_format">Unsupported file format.</string>
+    <string name="remote_empty_file">Empty file.</string>
+    <string name="remote_truncated_text">Showing the first %1$d KiB of UTF-8 text.</string>
+    <plurals name="remote_utf8_bytes">
+        <item quantity="one">UTF-8 text · %1$d byte</item>
+        <item quantity="other">UTF-8 text · %1$d bytes</item>
+    </plurals>
+    <string name="remote_decode_image_failed">Could not decode image.</string>
+    <string name="remote_image_dimensions_limit">Image dimensions exceed the preview limit.</string>
+    <string name="remote_image_dimensions">%1$d × %2$d</string>
+    <string name="remote_preview_of">Preview of %1$s</string>
 </resources>

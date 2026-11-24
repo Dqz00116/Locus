@@ -2,7 +2,10 @@ package dev.locus.app;
 
 import com.jcraft.jsch.SocketFactory;
 
+import dev.locus.app.OperationException.Reason;
+
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
@@ -32,7 +35,7 @@ final class FrpRoute implements SocketFactory, AutoCloseable {
         final int legacyLoopbackPort;
         final boolean hasProxyDefinitions;
 
-        Choice(JSONObject json) throws Exception {
+        Choice(JSONObject json) throws JSONException {
             name = json.getString("name");
             label = json.getString("label");
             identity = json.getString("identity");
@@ -57,21 +60,81 @@ final class FrpRoute implements SocketFactory, AutoCloseable {
                 && Integer.parseInt(octets[3]) <= 255;
     }
 
-    static List<Choice> inspect(byte[] config) throws Exception {
-        JSONArray entries = new JSONArray(Frp.inspect(config));
-        List<Choice> choices = new ArrayList<>(entries.length());
-        for (int index = 0; index < entries.length(); index++) {
-            choices.add(new Choice(entries.getJSONObject(index)));
+    static List<Choice> inspect(byte[] config) throws IOException {
+        try {
+            JSONArray entries = new JSONArray(Frp.inspect(config));
+            List<Choice> choices = new ArrayList<>(entries.length());
+            for (int index = 0; index < entries.length(); index++) {
+                choices.add(new Choice(entries.getJSONObject(index)));
+            }
+            return choices;
+        } catch (Exception failure) {
+            throw nativeFailure(failure, Reason.FRP_PROFILE_INVALID, "Could not read the FRP profile.");
         }
-        return choices;
     }
 
-    static byte[] select(byte[] config, String visitor) throws Exception {
-        return Frp.select(config, visitor);
+    static byte[] select(byte[] config, String visitor) throws IOException {
+        try {
+            return Frp.select(config, visitor);
+        } catch (Exception failure) {
+            throw nativeFailure(failure, Reason.FRP_PROFILE_SELECTION_FAILED, "Could not select the STCP visitor.");
+        }
     }
 
-    static FrpRoute start(byte[] selected) throws Exception {
-        return new FrpRoute(Frp.start(selected));
+    static FrpRoute start(byte[] selected) throws IOException {
+        try {
+            return new FrpRoute(Frp.start(selected));
+        } catch (Exception failure) {
+            throw nativeFailure(failure, Reason.FRP_RELAY_START_FAILED, "Could not start the FRP visitor.");
+        }
+    }
+
+    private static OperationException nativeFailure(Exception failure, Reason fallback, String fallbackMessage) {
+        String message = failure.getMessage();
+        Reason reason = message == null ? null : nativeReason(message);
+        return reason == null ? new OperationException(fallback, fallbackMessage, failure)
+                : new OperationException(reason, message, failure);
+    }
+
+    // The gomobile ABI supplies only text. Match the fixed errors we own in frp-engine.
+    private static Reason nativeReason(String message) {
+        switch (message) {
+            case "Choose an FRP file no larger than 64 KiB.":
+            case "Choose a nonempty FRP TOML file no larger than 64 KiB.":
+                return Reason.FRP_PROFILE_SIZE;
+            case "This file defines FRP proxies. Choose the client TOML with an STCP entry under [[visitors]].":
+            case "Choose a self-contained FRP TOML with the relay settings and its STCP [[visitors]] entry.":
+            case "Choose the FRP client TOML with an STCP entry under [[visitors]].":
+            case "The FRP file contains no enabled STCP visitor.":
+                return Reason.FRP_PROFILE_NEEDS_VISITOR;
+            case "Use an FRP token specified directly in the TOML file.":
+            case "The FRP file contains an unsupported authentication scope.":
+            case "Choose TCP or KCP for FRP transport.protocol.":
+            case "Choose v1 or v2 for FRP transport.wireProtocol.":
+            case "This FRP profile requires transport.proxyURL, which Locus does not support.":
+            case "Enable TLS for the FRP relay.":
+            case "FRP imports support TLS with system trust instead of certificate file paths.":
+            case "Locus supports regular STCP visitors without FRP plugins.":
+                return Reason.FRP_PROFILE_UNSUPPORTED;
+            case "Could not parse the FRP TOML file.":
+            case "FRP visitor names must be unique.":
+            case "Could not read the saved FRP visitor.":
+            case "Enter a valid FRP relay address, port and user.":
+            case "The FRP token must be a literal value no longer than 4096 bytes.":
+            case "Enter a valid FRP TLS server name.":
+            case "Each STCP visitor needs a valid name and serverName.":
+            case "Each STCP visitor needs a literal secretKey no longer than 4096 bytes.":
+            case "The saved FRP visitor has an invalid local port hint.":
+                return Reason.FRP_PROFILE_INVALID;
+            case "The selected STCP visitor was not found.": return Reason.FRP_PROFILE_SELECTION_FAILED;
+            case "The FRP relay did not become ready in time.": return Reason.FRP_RELAY_TIMEOUT;
+            case "Could not log in to the FRP relay. Check its address and token.": return Reason.FRP_RELAY_LOGIN_FAILED;
+            case "Could not open the local FRP transport socket.":
+            case "Could not initialize the FRP transport.":
+            case "Could not configure the selected FRP visitor.":
+                return Reason.FRP_RELAY_START_FAILED;
+            default: return null;
+        }
     }
 
     private FrpRoute(Tunnel tunnel) {

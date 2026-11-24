@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connection_action_disconnect">断开 SSH</string>
+    <string name="connection_disconnect_title">断开 SSH 连接？</string>
+    <string name="connection_disconnect_message">此操作将关闭所有已打开窗口中的 SSH 通道。</string>
+    <string name="connection_disconnect_confirm">断开</string>
+    <string name="connection_setup">连接设置</string>
+    <string name="connection_picker_unavailable">无法打开 Android 文件选择器。</string>
+    <string name="connection_import_ssh_failed">无法导入 SSH 配置</string>
+    <string name="connection_config_no_user_title">此文件中没有 SSH 用户名</string>
+    <string name="connection_config_no_user_message">请选择包含 User 设置的 OpenSSH 配置文件，或直接填写用户名。</string>
+    <string name="connection_choose_host_alias">选择 SSH 主机别名</string>
+    <string name="connection_alias_proxy_title">SSH 别名使用了代理</string>
+    <string name="connection_alias_proxy_message">请选择可直接访问的 SSH 主机别名，或先选择 FRP 配置。</string>
+    <string name="connection_choose_stcp_visitor">选择用于 SSH 的 STCP 访问端</string>
+    <string name="connection_import_frp_failed">无法导入 FRP 配置</string>
+    <string name="connection_remove_saved_file_failed">无法移除已保存的文件</string>
+    <string name="connection_forget_login_failed">无法清除已保存的登录信息</string>
+    <string name="connection_save_login_warning">已连接，但部分登录信息无法保存在此设备上。</string>
+    <string name="connection_verify_host">验证 SSH 主机</string>
+    <string name="connection_verify_host_details">%1$s\n%2$s\n%3$s\n\n请先与服务器的指纹核对，再信任此主机。</string>
+    <string name="connection_trust_host">信任主机</string>
+    <string name="connection_frp_failed">FRP / SSH 连接失败</string>
+    <string name="connection_ssh_failed">SSH 连接失败</string>
+</resources>
