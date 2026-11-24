@@ -22,13 +22,33 @@
 
 Locus is an Android client for remote Linux work. Connect to your host, pick a working directory, and use the shell and command-line tools installed there. Keep independent shells and your remote files in one tablet workspace.
 
-<p align="center">
-  <img src="./docs/media/locus-workflow.gif" width="960" alt="Locus shows two independent SSH terminals, then previews highlighted remote source code and resizes the split">
-</p>
+Compose text with your Android IME and use a physical keyboard for terminal keys and shortcuts.
 
-- **Native input.** Compose text with your Android IME and use a physical keyboard for terminal keys and shortcuts.
-- **Dockable windows.** Open independent SSH terminals, resize splits, and save a layout with each window’s folder.
-- **Read-only file preview.** Browse remote folders over SFTP and preview text and supported images. Common source files get syntax highlighting.
+## See Locus in action
+
+### Dock and resize windows
+
+Pick an edge to place another terminal, then drag a divider to give each pane the space it needs.
+
+<img src="./docs/media/locus-docking.gif" width="960" alt="A new SSH terminal docks below another pane, then the split is resized">
+
+### Preview remote files
+
+Browse folders over SFTP and open a read-only preview alongside your terminal. Common source files get syntax highlighting. Supported images can also be previewed.
+
+<img src="./docs/media/locus-files.gif" width="960" alt="Remote folders open into a syntax-highlighted source preview alongside a live terminal">
+
+### Save and reopen layouts
+
+Save a window arrangement with each pane’s directory and reopen it from the sidebar.
+
+<img src="./docs/media/locus-layouts.gif" width="960" alt="A layout is saved, resized, then restored from the sidebar">
+
+### Type Chinese in the terminal
+
+Compose with Android’s Pinyin keyboard. Selecting `你好` sends the committed text to the remote terminal.
+
+<img src="./docs/media/locus-input.gif" width="960" alt="Gboard shows Pinyin candidates, then the SSH terminal displays the selected text 你好">
 
 ## Quick Start
 
