@@ -9,7 +9,7 @@
         android:theme="@style/Theme.Locus">
         <activity
             android:name=".MainActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|locale|layoutDirection"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|locale|layoutDirection"
             android:exported="true"
             android:windowSoftInputMode="adjustResize|stateAlwaysHidden">
             <intent-filter>

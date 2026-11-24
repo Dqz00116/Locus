@@ -33,6 +33,9 @@
     <string name="workspace_terminal_stopped">Terminal stopped. %1$s</string>
     <string name="workspace_terminal_closed">SSH terminal closed</string>
     <string name="workspace_ssh_disconnected">SSH disconnected</string>
+    <string name="workspace_ssh_reconnect">SSH disconnected · Reconnect</string>
+    <string name="workspace_ssh_setup">SSH disconnected · Connection setup</string>
+    <string name="workspace_ssh_reopen">SSH disconnected · Open a new shell</string>
     <string name="workspace_input_limit">Input exceeds %1$d KiB.</string>
     <string name="workspace_send_queue_full">Terminal send queue is full. Try again.</string>
     <string name="mount_hint">Tap a highlighted edge to place the new window.</string>

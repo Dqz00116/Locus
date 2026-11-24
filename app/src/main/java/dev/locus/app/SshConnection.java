@@ -34,7 +34,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** Blocking SSH operations. Each terminal has its own PTY. */
 final class SshConnection implements RemoteConnection {
@@ -117,12 +119,20 @@ final class SshConnection implements RemoteConnection {
     static SshConnection connect(Profile profile, String secret, byte[] privateKey,
             File hostPins, HostKeyApproval approval, SocketFactory sockets, Runnable closeRoute,
             int connectTimeoutMs, Runnable hostVerified) throws IOException, JSchException {
+        return connect(profile, secret, privateKey, hostPins, approval, sockets, closeRoute,
+                connectTimeoutMs, hostVerified, null);
+    }
+
+    static SshConnection connect(Profile profile, String secret, byte[] privateKey,
+            File hostPins, HostKeyApproval approval, SocketFactory sockets, Runnable closeRoute,
+            int connectTimeoutMs, Runnable hostVerified, Consumer<RemoteConnection> connectionClosed)
+            throws IOException, JSchException {
         try {
             if (privateKey != null && (privateKey.length == 0 || privateKey.length > MAX_PRIVATE_KEY_BYTES)) {
                 throw new OperationException(Reason.SSH_KEY_SIZE, "Choose a private key file no larger than 64 KiB.");
             }
             return establish(profile, secret, privateKey, hostPins, approval, sockets, closeRoute,
-                    connectTimeoutMs, hostVerified);
+                    connectTimeoutMs, hostVerified, connectionClosed);
         } finally {
             if (privateKey != null) Arrays.fill(privateKey, (byte) 0);
         }
@@ -130,7 +140,8 @@ final class SshConnection implements RemoteConnection {
 
     private static SshConnection establish(Profile profile, String secret, byte[] privateKey,
             File hostPins, HostKeyApproval approval, SocketFactory sockets, Runnable closeRoute,
-            int connectTimeoutMs, Runnable hostVerified) throws IOException, JSchException {
+            int connectTimeoutMs, Runnable hostVerified, Consumer<RemoteConnection> connectionClosed)
+            throws IOException, JSchException {
         requireNotInterrupted();
         HostPins pins = new HostPins(profile.endpoint(), hostPins, approval, hostVerified);
         JSch jsch = new JSch();
@@ -145,6 +156,8 @@ final class SshConnection implements RemoteConnection {
         session.setConfig("max_input_buffer_size", "131072");
         session.setServerAliveInterval(IO_TIMEOUT_MS);
         session.setServerAliveCountMax(2);
+        SshConnection connection = new SshConnection(session, closeRoute);
+        if (connectionClosed != null) connection.notifyWhenDisconnected(connectionClosed);
         byte[] secretBytes = secret == null ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
         boolean connected = false;
         try {
@@ -164,7 +177,7 @@ final class SshConnection implements RemoteConnection {
             session.connect(connectTimeoutMs);
             requireNotInterrupted();
             connected = true;
-            return new SshConnection(session, closeRoute);
+            return connection;
         } catch (JSchException failure) {
             if (pins.failure != null) {
                 throw pins.failure;
@@ -179,6 +192,22 @@ final class SshConnection implements RemoteConnection {
                 session.disconnect();
             }
         }
+    }
+
+    private void notifyWhenDisconnected(Consumer<RemoteConnection> connectionClosed) {
+        ThreadFactory threads = session.getThreadFactory();
+        // JSch 2.28.8 creates its Session.run worker first, after authentication.
+        // It closes channels before changing isConnected. Wait until the worker exits.
+        session.setThreadFactory(worker -> {
+            session.setThreadFactory(threads);
+            return threads.newThread(() -> {
+                try {
+                    worker.run();
+                } finally {
+                    connectionClosed.accept(this);
+                }
+            });
+        });
     }
 
     @Override

@@ -12,10 +12,11 @@ import java.util.UUID;
 final class DiagnosticLog {
     enum Route { DIRECT, FRP_STCP }
     enum Auth { PASSWORD, KEY }
-    enum Stage { PREPARE, FRP_RELAY, STCP, SSH_HANDSHAKE, HOST_KEY, SSH_AUTH, SFTP, PTY, SESSION }
+    enum Stage { PREPARE, FRP_RELAY, STCP, SSH_HANDSHAKE, HOST_KEY, SSH_AUTH, SFTP, PTY, SESSION, LIFECYCLE }
     enum Outcome {
         STARTED, READY, FAILED, APPROVAL_REQUIRED, HOST_CHANGED, TIMEOUT, STCP_OPEN_FAILED,
-        AUTH_REJECTED, NEGOTIATION_FAILED, PATH_UNAVAILABLE, DISCONNECTED
+        AUTH_REJECTED, NEGOTIATION_FAILED, PATH_UNAVAILABLE, DISCONNECTED, TRANSPORT_LOST,
+        BACKGROUNDED, FOREGROUNDED, RETRYING
     }
 
     private static final String TAG = "LocusDiag";
@@ -83,6 +84,9 @@ final class DiagnosticLog {
                 case READY:
                 case APPROVAL_REQUIRED:
                 case DISCONNECTED:
+                case BACKGROUNDED:
+                case FOREGROUNDED:
+                case RETRYING:
                     return false;
                 default:
                     return true;

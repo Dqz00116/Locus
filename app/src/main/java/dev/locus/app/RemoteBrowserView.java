@@ -63,6 +63,7 @@ final class RemoteBrowserView extends LinearLayout {
     private Future<?> request;
     private long generation;
     private boolean disposed;
+    private boolean offline;
     private String directory;
     private RemoteConnection.FileEntry selectedFile;
     // Resolve display text from the current locale without reloading the remote data.
@@ -138,7 +139,7 @@ final class RemoteBrowserView extends LinearLayout {
 
     /** Opens the selected directory and uses its canonical path for navigation. */
     void openDirectory(String path) {
-        if (disposed) return;
+        if (disposed || offline) return;
         directory = path;
         selectedFile = null;
         fileBody.removeAllViews();
@@ -172,8 +173,19 @@ final class RemoteBrowserView extends LinearLayout {
         fileBody.removeAllViews();
     }
 
+    // The disconnected pane can still display its last completed list or preview.
+    void transportLost() {
+        if (offline || disposed) return;
+        offline = true;
+        if (request != null) {
+            cancelRequest();
+            showStatus(string(R.string.error_sftp_disconnected));
+        }
+        updateNavigation();
+    }
+
     private void openFile(RemoteConnection.FileEntry entry) {
-        if (disposed) return;
+        if (disposed || offline) return;
         selectedFile = entry;
         String path = childPath(entry.name);
         fileBody.removeAllViews();
@@ -201,7 +213,7 @@ final class RemoteBrowserView extends LinearLayout {
             listing.setVisibility(VISIBLE);
             refreshStatus();
             updateNavigation();
-        } else if (directory != null && !directory.equals("/")) {
+        } else if (!offline && directory != null && !directory.equals("/")) {
             int slash = directory.lastIndexOf('/');
             openDirectory(slash <= 0 ? "/" : directory.substring(0, slash));
         }
@@ -210,8 +222,8 @@ final class RemoteBrowserView extends LinearLayout {
     private void updateNavigation() {
         updateNavigationLabels();
         boolean preview = selectedFile != null;
-        back.setEnabled(directory != null && (preview || !directory.equals("/")));
-        refresh.setEnabled(directory != null);
+        back.setEnabled(directory != null && (preview || !offline && !directory.equals("/")));
+        refresh.setEnabled(!offline && directory != null);
         if (directory != null) {
             String path = preview ? childPath(selectedFile.name) : directory;
             pathLabel.setText(visibleLabel(path));

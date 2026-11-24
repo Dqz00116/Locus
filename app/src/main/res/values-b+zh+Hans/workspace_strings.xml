@@ -30,6 +30,9 @@
     <string name="workspace_terminal_stopped">终端已停止。%1$s</string>
     <string name="workspace_terminal_closed">SSH 终端已关闭</string>
     <string name="workspace_ssh_disconnected">SSH 已断开</string>
+    <string name="workspace_ssh_reconnect">SSH 已断开 · 重新连接</string>
+    <string name="workspace_ssh_setup">SSH 已断开 · 连接设置</string>
+    <string name="workspace_ssh_reopen">SSH 已断开 · 打开新的 Shell</string>
     <string name="workspace_input_limit">输入超过 %1$d KiB。</string>
     <string name="workspace_send_queue_full">终端发送队列已满，请重试。</string>
     <string name="mount_hint">点击高亮侧边放置新窗口</string>

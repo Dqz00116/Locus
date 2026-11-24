@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="retrying_frp_ssh">正在通过新的 FRP 访问端重试 SSH…</string>
     <string name="connection_action_disconnect">断开 SSH</string>
     <string name="connection_disconnect_title">断开 SSH 连接？</string>
     <string name="connection_disconnect_message">此操作将关闭所有已打开窗口中的 SSH 通道。</string>

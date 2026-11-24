@@ -78,6 +78,7 @@ public final class MainActivity extends Activity {
     private RemoteConnection connection;
     private DiagnosticLog diagnostics;
     private DiagnosticLog.Trace connectionTrace;
+    private DiagnosticLog.Trace pendingConnectionTrace;
     private SshConnection.Profile lastDirect;
     private String lastUsername = "";
     private boolean preferFrp;
@@ -95,6 +96,7 @@ public final class MainActivity extends Activity {
     private boolean importingProfile;
     private boolean connecting;
     private int connectionProgress;
+    private volatile boolean foreground;
     private volatile boolean destroyed;
     private int nextPaneId = 1;
 
@@ -186,7 +188,9 @@ public final class MainActivity extends Activity {
         setSelection(Selection.NONE);
         refreshConnection();
         pane.focus();
-        if (!restore && hasConnection()) chooseDirectory(pane, target.directory());
+        if (!restore && hasConnection()) {
+            chooseDirectory(pane, target.directoryFor(connectedEndpoint, connectedUsername));
+        }
     }
 
     void minimizePane(WorkspacePane pane) {
@@ -434,6 +438,15 @@ public final class MainActivity extends Activity {
         else connectOrConfigure(pane, true);
     }
 
+    void reconnectPane(WorkspacePane pane) {
+        if (connecting || loadingConnection || selection != Selection.NONE || !panes.contains(pane)) return;
+        if (hasConnection()) {
+            reopenDirectory(pane, connection, pane.reconnectDirectory(connectedEndpoint, connectedUsername));
+        } else {
+            connectOrConfigure(pane, true);
+        }
+    }
+
     private SavedSshConnection reusableConnection() {
         SavedSshConnection saved = savedConnection;
         if (!matchesSavedConnection(saved, preferFrp) || !saved.canConnect(credentials)) return null;
@@ -534,18 +547,28 @@ public final class MainActivity extends Activity {
 
     void terminalEnded() {
         if (connection != null && !connection.isOpen()) {
-            RemoteConnection ended = connection;
-            connection = null;
-            endConnectionTrace();
-            onIo(ended::close);
+            transportClosed(connection);
+        } else {
+            refreshConnection();
         }
+    }
+
+    private void transportClosed(RemoteConnection ended) {
+        if (destroyed || connection != ended) return;
+        connection = null;
+        endConnectionTrace(Outcome.TRANSPORT_LOST);
+        connectedEndpoint = null;
+        connectedUsername = null;
+        for (WorkspacePane pane : panes) pane.transportLost();
+        for (WorkspacePane pane : minimized) pane.transportLost();
+        onIo(ended::close);
         refreshConnection();
     }
 
     private void disconnect() {
         RemoteConnection previous = connection;
         connection = null;
-        endConnectionTrace();
+        endConnectionTrace(Outcome.DISCONNECTED);
         connectedEndpoint = null;
         connectedUsername = null;
         for (WorkspacePane pane : panes) pane.detach();
@@ -558,14 +581,14 @@ public final class MainActivity extends Activity {
         return connection == target ? connectionTrace : null;
     }
 
-    private void endConnectionTrace() {
+    private void endConnectionTrace(Outcome outcome) {
         if (connectionTrace == null) return;
-        connectionTrace.record(Stage.SESSION, Outcome.DISCONNECTED);
+        connectionTrace.record(Stage.SESSION, outcome);
         connectionTrace = null;
     }
 
     void chooseDirectory(WorkspacePane pane) {
-        chooseDirectory(pane, pane.directory());
+        chooseDirectory(pane, pane.directoryFor(connectedEndpoint, connectedUsername));
     }
 
     private void chooseDirectory(WorkspacePane pane, String suggestedDirectory) {
@@ -912,7 +935,8 @@ public final class MainActivity extends Activity {
                          SshConnection.HostKeyApproval approval, SavedSshConnection expected,
                          boolean reopenDirectory) {
         if (connecting) return;
-        if (connection != null) disconnect();
+        if (hasConnection()) disconnect();
+        else if (connection != null) transportClosed(connection);
         hasDraft = true;
         preferFrp = request.frp;
         draftAuthMode = request.authMode;
@@ -931,6 +955,7 @@ public final class MainActivity extends Activity {
         DiagnosticLog.Trace trace = diagnostics.begin(
                 request.frp ? DiagnosticLog.Route.FRP_STCP : DiagnosticLog.Route.DIRECT,
                 request.authMode == AuthMode.KEY ? DiagnosticLog.Auth.KEY : DiagnosticLog.Auth.PASSWORD);
+        pendingConnectionTrace = trace;
         trace.record(Stage.PREPARE, Outcome.STARTED);
         io.execute(() -> establish(pane, request, approval, expected, direct, pins, reopenDirectory, trace));
     }
@@ -984,26 +1009,43 @@ public final class MainActivity extends Activity {
                 secret = stored.secret;
             }
             trace.record(Stage.PREPARE, Outcome.READY);
-            SshConnection.Profile profile = direct;
-            if (request.frp) {
-                stage = Stage.FRP_RELAY;
+            SshConnection.Profile profile;
+            SshConnection handshake;
+            for (int attempt = 0; ; attempt++) {
+                profile = direct;
+                if (request.frp) {
+                    stage = Stage.FRP_RELAY;
+                    trace.record(stage, Outcome.STARTED);
+                    route = FrpRoute.start(frpConfig);
+                    trace.record(stage, Outcome.READY);
+                    profile = new SshConnection.Profile("127.0.0.1", route.port(), request.username, endpoint);
+                    if (attempt == 0) postConnectionProgress(R.string.connecting_ssh);
+                }
+                stage = Stage.SSH_HANDSHAKE;
                 trace.record(stage, Outcome.STARTED);
-                route = FrpRoute.start(frpConfig);
-                trace.record(stage, Outcome.READY);
-                profile = new SshConnection.Profile("127.0.0.1", route.port(), request.username, endpoint);
-                main.post(() -> {
-                    if (destroyed) return;
-                    connectionProgress = R.string.connecting_ssh;
-                    refreshConnection();
-                });
+                int timeout = route == null ? SshConnection.DEFAULT_CONNECT_TIMEOUT_MS : FrpRoute.SSH_CONNECT_TIMEOUT_MS;
+                // SSH takes ownership of the bytes. A fresh FRP route needs its own copy.
+                byte[] attemptKey = route == null || key == null ? key : key.clone();
+                try {
+                    handshake = SshConnection.connect(profile, secret, attemptKey, pins, approval,
+                            route, route == null ? null : route::close, timeout,
+                            () -> {
+                                if (hostVerified.compareAndSet(false, true)) {
+                                    trace.record(Stage.HOST_KEY, Outcome.READY);
+                                }
+                            }, ended -> main.post(() -> transportClosed(ended)));
+                    break;
+                } catch (Exception failure) {
+                    if (attempt != 0 || route == null || hostVerified.get() || !foreground || destroyed
+                            || !FrpRoute.isSshTimeout(failure) || !route.failureHint().isEmpty()) throw failure;
+                    trace.record(stage, Outcome.TIMEOUT);
+                    trace.record(stage, Outcome.RETRYING);
+                    route.close();
+                    route = null;
+                    postConnectionProgress(R.string.retrying_frp_ssh);
+                }
             }
-            stage = Stage.SSH_HANDSHAKE;
-            trace.record(stage, Outcome.STARTED);
-            int connectTimeout = route == null ? SshConnection.DEFAULT_CONNECT_TIMEOUT_MS : FrpRoute.SSH_CONNECT_TIMEOUT_MS;
-            SshConnection result = SshConnection.connect(profile, secret, key, pins, approval,
-                    route, route == null ? null : route::close, connectTimeout, () -> {
-                        if (hostVerified.compareAndSet(false, true)) trace.record(Stage.HOST_KEY, Outcome.READY);
-                    });
+            SshConnection result = handshake;
             trace.record(Stage.SSH_AUTH, Outcome.READY);
             route = null;
             if (destroyed) {
@@ -1040,22 +1082,25 @@ public final class MainActivity extends Activity {
                 }
                 connection = result;
                 connectionTrace = trace;
-                trace.record(Stage.SESSION, Outcome.READY);
+                pendingConnectionTrace = null;
                 if (saved != null) savedConnection = saved;
                 connectedEndpoint = connectedRoute;
                 connectedUsername = request.username;
                 connecting = false;
+                if (!result.isOpen()) {
+                    transportClosed(result);
+                    return;
+                }
+                trace.record(Stage.SESSION, Outcome.READY);
                 refreshConnection();
                 if (warn) toast(getString(R.string.connection_save_login_warning));
                 WorkspacePane selected = panes.contains(pane) ? pane : panes.get(0);
                 String recent = connectedRoute.equals(preferences.getString("directoryEndpoint", ""))
                         && request.username.equals(preferences.getString("directoryUser", ""))
                         ? preferences.getString("directory", "") : "";
-                if (reopenDirectory && !recent.isEmpty()) {
-                    selected.open(result, recent, () -> {
-                        if (connection == result && panes.contains(selected)) chooseDirectory(selected, "");
-                    });
-                    selected.focus();
+                if (reopenDirectory) {
+                    String paneDirectory = selected.reconnectDirectory(connectedRoute, request.username);
+                    reopenDirectory(selected, result, paneDirectory.isEmpty() ? recent : paneDirectory);
                 } else {
                     chooseDirectory(selected, recent);
                 }
@@ -1064,6 +1109,7 @@ public final class MainActivity extends Activity {
             trace.record(Stage.HOST_KEY, Outcome.APPROVAL_REQUIRED);
             main.post(() -> {
                 if (destroyed) return;
+                pendingConnectionTrace = null;
                 connecting = false;
                 refreshConnection();
                 new AlertDialog.Builder(this)
@@ -1082,17 +1128,26 @@ public final class MainActivity extends Activity {
             else if (outcome == Outcome.HOST_CHANGED) failedStage = Stage.HOST_KEY;
             else if (hostVerified.get() || outcome == Outcome.AUTH_REJECTED) failedStage = Stage.SSH_AUTH;
             trace.record(failedStage, outcome);
-            String message = connectionFailureMessage(route, failure, outcome);
+            int routeMessage = connectionFailureResource(route, outcome);
             main.post(() -> {
                 if (destroyed) return;
+                pendingConnectionTrace = null;
                 connecting = false;
                 refreshConnection();
-                new AlertDialog.Builder(this)
+                AlertDialog.Builder dialog = new AlertDialog.Builder(this)
                         .setTitle(request.frp ? R.string.connection_frp_failed : R.string.connection_ssh_failed)
-                        .setMessage(message)
-                        .setNeutralButton(R.string.connection_setup, (dialog, which) -> configureConnection(selectedPane()))
-                        .setPositiveButton(R.string.action_ok, null)
-                        .show();
+                        .setMessage(routeMessage == 0 ? UiErrors.message(this, failure) : getString(routeMessage))
+                        .setNeutralButton(R.string.connection_setup, (view, which) -> configureConnection(selectedPane()));
+                if (outcome == Outcome.TIMEOUT && expected != null && reusableConnection() != null) {
+                    dialog.setNegativeButton(R.string.action_cancel, null)
+                            .setPositiveButton(R.string.remote_retry, (view, which) -> {
+                                WorkspacePane selected = panes.contains(pane) ? pane : selectedPane();
+                                connectOrConfigure(selected, reopenDirectory);
+                            });
+                } else {
+                    dialog.setPositiveButton(R.string.action_ok, null);
+                }
+                dialog.show();
             });
         } finally {
             if (route != null) route.close();
@@ -1114,12 +1169,31 @@ public final class MainActivity extends Activity {
         return Outcome.FAILED;
     }
 
-    private String connectionFailureMessage(FrpRoute route, Exception failure, Outcome outcome) {
+    private static int connectionFailureResource(FrpRoute route, Outcome outcome) {
         if (route != null) {
-            if (outcome == Outcome.STCP_OPEN_FAILED) return getString(R.string.frp_stcp_route_failed);
-            if (outcome == Outcome.TIMEOUT) return getString(R.string.frp_ssh_response_timeout);
+            if (outcome == Outcome.STCP_OPEN_FAILED) return R.string.frp_stcp_route_failed;
+            if (outcome == Outcome.TIMEOUT) return R.string.frp_ssh_response_timeout;
         }
-        return UiErrors.message(this, failure);
+        return 0;
+    }
+
+    private void postConnectionProgress(int progress) {
+        main.post(() -> {
+            if (destroyed) return;
+            connectionProgress = progress;
+            refreshConnection();
+        });
+    }
+
+    private void reopenDirectory(WorkspacePane pane, RemoteConnection current, String directory) {
+        if (directory.isEmpty()) {
+            chooseDirectory(pane, "");
+        } else {
+            pane.open(current, directory, () -> {
+                if (connection == current && panes.contains(pane)) chooseDirectory(pane, "");
+            });
+            pane.focus();
+        }
     }
 
     private void showError(int title, String message) {
@@ -1140,8 +1214,9 @@ public final class MainActivity extends Activity {
         pane.focus();
     }
 
-    void directoryOpened(RemoteConnection current, String directory) {
+    void directoryOpened(WorkspacePane pane, RemoteConnection current, String directory) {
         if (connection == current && connectedEndpoint != null && connectedUsername != null) {
+            pane.setDirectoryIdentity(connectedEndpoint, connectedUsername);
             preferences.edit().putString("directoryEndpoint", connectedEndpoint)
                     .putString("directoryUser", connectedUsername).putString("directory", directory).apply();
         }
@@ -1207,15 +1282,30 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        foreground = true;
+        recordConnectionLifecycle(Outcome.FOREGROUNDED);
+        terminalEnded();
+    }
+
+    @Override
     protected void onStop() {
+        foreground = false;
+        recordConnectionLifecycle(Outcome.BACKGROUNDED);
         shelf.dismiss();
         super.onStop();
+    }
+
+    private void recordConnectionLifecycle(Outcome outcome) {
+        DiagnosticLog.Trace trace = connectionTrace == null ? pendingConnectionTrace : connectionTrace;
+        if (trace != null) trace.record(Stage.LIFECYCLE, outcome);
     }
 
     @Override
     protected void onDestroy() {
         destroyed = true;
-        endConnectionTrace();
+        endConnectionTrace(Outcome.DISCONNECTED);
         for (WorkspacePane pane : panes) pane.dispose();
         for (WorkspacePane pane : minimized) pane.dispose();
         if (connection != null) onIo(connection::close);

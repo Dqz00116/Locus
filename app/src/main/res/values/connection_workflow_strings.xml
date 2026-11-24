@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="retrying_frp_ssh">Retrying SSH through a new FRP visitor…</string>
     <string name="connection_action_disconnect">Disconnect SSH</string>
     <string name="connection_disconnect_title">Disconnect from SSH?</string>
     <string name="connection_disconnect_message">This closes the SSH channels in all open windows.</string>

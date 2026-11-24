@@ -2,7 +2,10 @@ package dev.locus.app;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.os.Bundle;
@@ -32,6 +35,7 @@ public final class TerminalSmoke extends Instrumentation {
         Bundle result = new Bundle();
         Activity activity = null;
         try {
+            checkKeyboardConfiguration();
             Intent intent = new Intent(getTargetContext(), MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activity = startActivitySync(intent);
@@ -44,7 +48,7 @@ public final class TerminalSmoke extends Instrumentation {
             onUi(fixture::exerciseSecondTerminal);
             onUi(fixture::exerciseRenderingAndResize);
             result.putString("stream", "\nPASS: local composition, UTF-8 commit, cancellation, focus, control keys,"
-                    + " bracketed paste, CJK rendering and independent resize.\n");
+                    + " bracketed paste, CJK rendering, independent resize and keyboard configuration.\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             StringWriter trace = new StringWriter();
@@ -54,6 +58,15 @@ public final class TerminalSmoke extends Instrumentation {
         } finally {
             if (activity != null) activity.finish();
         }
+    }
+
+    private void checkKeyboardConfiguration() throws PackageManager.NameNotFoundException {
+        int keyboardChanges = ActivityInfo.CONFIG_KEYBOARD | ActivityInfo.CONFIG_KEYBOARD_HIDDEN
+                | ActivityInfo.CONFIG_NAVIGATION;
+        ActivityInfo workspace = getTargetContext().getPackageManager().getActivityInfo(
+                new ComponentName(getTargetContext(), MainActivity.class), 0);
+        require((workspace.configChanges & keyboardChanges) == keyboardChanges,
+                "keyboard and navigation changes must preserve the workspace Activity");
     }
 
     private void onUi(Runnable test) {
