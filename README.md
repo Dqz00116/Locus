@@ -37,17 +37,17 @@ Locus is an Android client for remote Linux work. Connect to your host, pick a w
 <details>
 <summary>Build and install from source</summary>
 
-Install PowerShell 7, Go 1.26, JDK 17 or 21, Android SDK Platform 34, Build Tools 34.0.0, Platform Tools, and Android NDK 27. Set `ANDROID_HOME` and add `go` and `adb` to your `PATH`.
+Install Go 1.26 or later, JDK 17 or 21, Android SDK Platform 34, Build Tools 34.0.0, Platform Tools, and Android NDK 27. Set `JAVA_HOME` and `ANDROID_HOME`, and add `go` and `adb` to your `PATH`.
 
-On Windows, connect your Android device to ADB and build from the repository root.
+From the repository root, run `gradlew.bat :app:assembleDebug` in Windows Command Prompt or `./gradlew :app:assembleDebug` on macOS or Linux. Gradle builds and packages the bundled FRP library automatically.
 
-```powershell
-.\frp-engine\build.ps1
-.\gradlew.bat :app:assembleDebug
+Connect your Android device to ADB and install the built APK.
+
+```text
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On macOS or Linux, use `pwsh ./frp-engine/build.ps1` and `./gradlew :app:assembleDebug`. To generate per-architecture APKs alongside the universal APK, add `-PlocusAbiApks=true` to the Gradle command.
+To generate per-architecture APKs alongside the universal APK, add `-PlocusAbiApks=true` to the Gradle command.
 
 </details>
 

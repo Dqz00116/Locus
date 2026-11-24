@@ -2,18 +2,6 @@ plugins {
     id 'com.android.application'
 }
 
-def frpEngine = rootProject.file('frp-engine/build/locus-frp.aar')
-tasks.register('checkFrpEngine') {
-    doLast {
-        if (!frpEngine.isFile()) {
-            throw new GradleException('Build the FRP library with frp-engine/build.ps1 before assembling Locus.')
-        }
-    }
-}
-tasks.named('preBuild') {
-    dependsOn 'checkFrpEngine'
-}
-
 abstract class StageProjectLicense extends DefaultTask {
     @InputFile
     @PathSensitive(PathSensitivity.NONE)
@@ -85,7 +73,7 @@ androidComponents {
 }
 
 dependencies {
-    implementation files(frpEngine)
+    implementation project(path: ':frp-engine', configuration: 'frpAar')
     implementation 'com.github.mwiede:jsch:2.28.8'
     implementation 'org.bouncycastle:bcprov-jdk15to18:1.87'
 }

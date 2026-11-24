@@ -37,17 +37,17 @@ Locus 是用于远程 Linux 工作的 Android 客户端。连接主机，选好�
 <details>
 <summary>从源码构建并安装</summary>
 
-安装 PowerShell 7、Go 1.26、JDK 17 或 21、Android SDK Platform 34、Build Tools 34.0.0、Platform Tools 和 Android NDK 27。设置 `ANDROID_HOME`，将 `go` 和 `adb` 加入 `PATH`。
+安装 Go 1.26 或更高版本、JDK 17 或 21、Android SDK Platform 34、Build Tools 34.0.0、Platform Tools 和 Android NDK 27。设置 `JAVA_HOME` 和 `ANDROID_HOME`，并将 `go` 和 `adb` 加入 `PATH`。
 
-在 Windows 上通过 ADB 连接设备，然后在仓库根目录运行以下命令。
+在仓库根目录构建。Windows 命令提示符运行 `gradlew.bat :app:assembleDebug`，macOS 或 Linux 运行 `./gradlew :app:assembleDebug`。Gradle 会自动构建并打包内置的 FRP 库。
 
-```powershell
-.\frp-engine\build.ps1
-.\gradlew.bat :app:assembleDebug
+通过 ADB 连接 Android 设备，然后安装生成的 APK。
+
+```text
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-macOS 和 Linux 使用 `pwsh ./frp-engine/build.ps1` 与 `./gradlew :app:assembleDebug`。需要同时生成按架构拆分的 APK 时，在 Gradle 命令末尾加上 `-PlocusAbiApks=true`。
+需要同时生成按架构拆分的 APK 时，在 Gradle 命令末尾加上 `-PlocusAbiApks=true`。
 
 </details>
 

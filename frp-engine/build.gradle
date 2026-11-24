@@ -1,0 +1,220 @@
+import org.gradle.process.ExecOperations
+
+import javax.inject.Inject
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.regex.Pattern
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+
+plugins {
+    id 'base'
+}
+
+abstract class BuildFrpEngine extends DefaultTask {
+    private static final List<String> ANDROID_ARCHITECTURES = ['arm64', 'amd64']
+    private static final String LICENSE_ROOT = 'assets/licenses/frp/'
+    private static final Pattern LICENSE_NAME = ~/(?i)^(LICENSE|NOTICE|COPYING|COPYRIGHT|PATENTS)(?:$|[._-])/
+
+    @Inject abstract ExecOperations getExecOperations()
+
+    @Internal abstract DirectoryProperty getModuleDirectory()
+    @Internal abstract Property<String> getInheritedPath()
+    @Input abstract Property<String> getGoExecutable()
+    @Input abstract Property<String> getSdkDirectory()
+    @Input abstract Property<String> getNdkDirectory()
+    @Input abstract Property<String> getJdkDirectory()
+    @Input abstract Property<String> getJavaVersion()
+
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getGoSources()
+
+    @InputFiles @PathSensitive(PathSensitivity.NONE)
+    abstract ConfigurableFileCollection getToolchainMetadata()
+
+    @OutputFile abstract RegularFileProperty getAarFile()
+
+    @TaskAction
+    void buildEngine() {
+        String goPath = goExecutable.get()
+        File go = new File(goPath)
+        boolean windows = File.separatorChar == '\\' as char
+        String executableSuffix = windows ? '.exe' : ''
+        if (goPath.isEmpty() || !go.isFile() || !go.name.equalsIgnoreCase("go${executableSuffix}")) {
+            throw new GradleException('Install Go 1.26 and add it to PATH, or set -PlocusGo to the path to go.')
+        }
+
+        File sdk = new File(sdkDirectory.get())
+        if (!sdk.isDirectory()) {
+            throw new GradleException('Set sdk.dir in local.properties or point ANDROID_HOME to the Android SDK.')
+        }
+        File tools = new File(temporaryDir, 'tools')
+        Files.createDirectories(tools.toPath())
+        String pathKey = windows ? System.getenv().keySet().find { it.equalsIgnoreCase('PATH') } ?: 'PATH' : 'PATH'
+        Map<String, String> environment = [
+                GOBIN: tools.absolutePath,
+                GOWORK: 'off',
+                ANDROID_HOME: sdk.absolutePath,
+                (pathKey): [tools.absolutePath, go.parentFile.absolutePath,
+                            new File(jdkDirectory.get(), 'bin').absolutePath, inheritedPath.get()]
+                        .findAll { !it.isEmpty() }.join(File.pathSeparator)
+        ]
+        if (!ndkDirectory.get().isEmpty()) environment.ANDROID_NDK_HOME = ndkDirectory.get()
+
+        List<String> host = goOutput(go, environment, ['env', 'GOHOSTOS', 'GOHOSTARCH']).readLines()
+        environment.GOOS = host[0].trim()
+        environment.GOARCH = host[1].trim()
+        run([go.absolutePath, 'install', '-mod=readonly',
+             'golang.org/x/mobile/cmd/gobind', 'golang.org/x/mobile/cmd/gomobile'], environment)
+
+        File rawAar = new File(temporaryDir, 'locus-frp-raw.aar')
+        String targets = ANDROID_ARCHITECTURES.collect { "android/${it}" }.join(',')
+        run([new File(tools, "gomobile${executableSuffix}").absolutePath,
+             'bind', "-target=${targets}", '-androidapi=28',
+             '-ldflags=-s -w -extldflags=-Wl,-z,max-page-size=16384',
+             '-trimpath', '-o', rawAar.absolutePath, '.'], environment)
+
+        Set<String> modules = new TreeSet<>()
+        for (String architecture : ANDROID_ARCHITECTURES) {
+            modules.addAll(goOutput(go, environment + [GOOS: 'android', GOARCH: architecture, CGO_ENABLED: '1'],
+                    ['list', '-mod=readonly', '-deps', '-f',
+                     '{{with .Module}}{{.Path}}|{{.Version}}|{{.Dir}}{{end}}', '.'])
+                    .readLines().findAll { !it.isBlank() })
+        }
+        modules.add(goOutput(go, environment, ['list', '-mod=readonly', '-m', '-f',
+                '{{.Path}}|{{.Version}}|{{.Dir}}', 'golang.org/x/mobile']).trim())
+        File goRoot = new File(goOutput(go, environment, ['env', 'GOROOT']).trim())
+
+        def output = aarFile.get().asFile.toPath()
+        Files.createDirectories(output.parent)
+        def staged = Files.createTempFile(output.parent, '.locus-frp-', '.aar')
+        try {
+            writeAar(rawAar, staged.toFile(), modules, goRoot)
+            Files.move(staged, output, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            Files.deleteIfExists(staged)
+        }
+    }
+
+    private void run(List<?> arguments, Map<String, String> variables, OutputStream output = null) {
+        execOperations.exec { spec ->
+            spec.commandLine(arguments)
+            spec.workingDir(moduleDirectory.get().asFile)
+            spec.environment(variables)
+            if (output != null) spec.standardOutput = output
+        }
+    }
+
+    private String goOutput(File go, Map<String, String> environment, List<String> arguments) {
+        def stdout = new ByteArrayOutputStream()
+        run([go.absolutePath] + arguments, environment, stdout)
+        return stdout.toString('UTF-8')
+    }
+
+    private static void writeAar(File raw, File staged, Set<String> modules, File goRoot) {
+        new ZipFile(raw).withCloseable { source ->
+            new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(staged))).withCloseable { target ->
+                source.entries().each { entry ->
+                    target.putNextEntry(zipEntry(entry.name))
+                    if (!entry.directory) source.getInputStream(entry).withCloseable { it.transferTo(target) }
+                    target.closeEntry()
+                }
+                String yamuxVersion
+                for (String module : modules) {
+                    def (name, version, directory) = module.split('\\|', 3)
+                    if (!version) continue
+                    if (name == 'github.com/fatedier/yamux') yamuxVersion = version
+                    File moduleRoot = new File(directory)
+                    List<File> licenses = (moduleRoot.listFiles() ?: []).findAll {
+                        it.isFile() && LICENSE_NAME.matcher(it.name).find()
+                    }.sort { it.name }
+                    if (licenses.isEmpty()) throw new GradleException("Missing license for ${name} ${version}.")
+                    for (File license : licenses) {
+                        copyFile(target, "${LICENSE_ROOT}${name}@${version}/${license.name}".toString(), license)
+                    }
+                }
+                for (String name : ['LICENSE', 'PATENTS']) {
+                    copyFile(target, "${LICENSE_ROOT}go/${name}".toString(), new File(goRoot, name))
+                }
+                if (yamuxVersion != null) {
+                    target.putNextEntry(zipEntry("${LICENSE_ROOT}yamux-source.txt".toString()))
+                    String notice = "Unmodified corresponding source for github.com/fatedier/yamux ${yamuxVersion}\n" +
+                            "https://github.com/fatedier/yamux/tree/${yamuxVersion}\n"
+                    target.write(notice.getBytes('UTF-8'))
+                    target.closeEntry()
+                }
+            }
+        }
+    }
+
+    private static void copyFile(ZipOutputStream target, String name, File content) {
+        target.putNextEntry(zipEntry(name))
+        Files.copy(content.toPath(), target)
+        target.closeEntry()
+    }
+
+    private static ZipEntry zipEntry(String name) {
+        ZipEntry entry = new ZipEntry(name)
+        entry.time = 0L
+        return entry
+    }
+}
+
+def environmentPath = providers.environmentVariable('PATH').getOrElse('')
+def goName = File.separatorChar == '\\' as char ? 'go.exe' : 'go'
+def requestedGo = providers.gradleProperty('locusGo').getOrNull()
+def selectedGo = requestedGo ? rootProject.file(requestedGo) :
+        environmentPath.split(Pattern.quote(File.pathSeparator)).findAll { !it.isEmpty() }
+                .collect { new File(it.replaceAll(/^"|"$/, ''), goName) }
+                .find { it.isFile() }
+
+def localProperties = new Properties()
+def localContent = providers.fileContents(rootProject.layout.projectDirectory.file('local.properties')).asBytes
+if (localContent.isPresent()) {
+    localProperties.load(new ByteArrayInputStream(localContent.get()))
+}
+def sdkSetting = localProperties.getProperty('sdk.dir') ?: providers.environmentVariable('ANDROID_HOME')
+        .orElse(providers.environmentVariable('ANDROID_SDK_ROOT')).getOrNull()
+def ndkSetting = providers.environmentVariable('ANDROID_NDK_HOME').getOrNull() ?: localProperties.getProperty('ndk.dir')
+def sdk = sdkSetting ? rootProject.file(sdkSetting) : null
+def ndk = ndkSetting ? rootProject.file(ndkSetting) : null
+
+def buildFrpEngine = tasks.register('buildFrpEngine', BuildFrpEngine) {
+    group = 'build'
+    description = 'Builds the FRP Android AAR and packages its dependency licenses.'
+    moduleDirectory.set(layout.projectDirectory)
+    inheritedPath.set(environmentPath)
+    goExecutable.set(selectedGo?.absolutePath ?: '')
+    sdkDirectory.set(sdk?.absolutePath ?: '')
+    ndkDirectory.set(ndk?.absolutePath ?: '')
+    jdkDirectory.set(System.getProperty('java.home'))
+    javaVersion.set(System.getProperty('java.runtime.version'))
+    ['GOTOOLCHAIN', 'GOFLAGS', 'GOEXPERIMENT'].each { name ->
+        inputs.property(name, providers.environmentVariable(name).orElse(''))
+    }
+    goSources.from(fileTree(layout.projectDirectory) {
+        include '**/*.go', 'go.mod', 'go.sum', 'assets/**'
+        exclude 'build/**', '**/*_test.go'
+    })
+    if (selectedGo != null) toolchainMetadata.from(selectedGo)
+    if (sdk != null) {
+        toolchainMetadata.from(fileTree(sdk) {
+            include 'platforms/*/source.properties', 'ndk/*/source.properties', 'ndk-bundle/source.properties'
+        })
+    }
+    if (ndk != null) toolchainMetadata.from(new File(ndk, 'source.properties'))
+    aarFile.set(layout.buildDirectory.file('locus-frp.aar'))
+}
+
+configurations.create('frpAar') {
+    canBeConsumed = true
+    canBeResolved = false
+    outgoing.artifact(buildFrpEngine.flatMap { it.aarFile }) {
+        type = 'aar'
+    }
+}
+
+tasks.named('assemble') {
+    dependsOn(buildFrpEngine)
+}
