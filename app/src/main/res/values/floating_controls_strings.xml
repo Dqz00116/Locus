@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="controls_docked_left">Docked left</string>
+    <string name="controls_docked_right">Docked right</string>
+    <string name="controls_docked_top">Docked top</string>
+    <string name="controls_docked_bottom">Docked bottom</string>
+</resources>

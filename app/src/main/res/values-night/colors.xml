@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="workspace_background">#121316</color>
+    <color name="surface">#1C1D22</color>
+    <color name="surface_variant">#222329</color>
+    <color name="surface_active">#2E3037</color>
+    <color name="text_primary">#F2F2F5</color>
+    <color name="text_secondary">#B8BCC6</color>
+    <color name="text_disabled">#797D87</color>
+    <color name="divider">#383941</color>
+    <color name="grip">#878B99</color>
+    <color name="accent">#A1C2FF</color>
+    <color name="accent_surface">#263552</color>
+    <color name="ripple">#32EBF0FF</color>
+</resources>

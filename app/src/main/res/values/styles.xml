@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Locus" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/workspace_background</item>
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:alertDialogTheme">@style/Theme.Locus.Alert</item>
+    </style>
+
+    <style name="Theme.Locus.Alert" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorBackgroundFloating">@color/surface</item>
+        <item name="android:windowBackground">@drawable/dialog_surface</item>
+        <item name="android:windowElevation">4dp</item>
+        <item name="android:backgroundDimAmount">0.32</item>
+    </style>
+</resources>

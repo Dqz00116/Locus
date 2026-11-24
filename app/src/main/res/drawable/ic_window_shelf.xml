@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M7,6 V5 Q7,3.5 8.5,3.5 H19.5 Q21,3.5 21,5 V14 Q21,15.5 19.5,15.5 H17.5 M4.5,8 H15.5 Q17.5,8 17.5,10 V18.5 Q17.5,20.5 15.5,20.5 H4.5 Q2.5,20.5 2.5,18.5 V10 Q2.5,8 4.5,8 Z M3,12 H17"
+        android:strokeColor="@color/shelf_control_icon"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

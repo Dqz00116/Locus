@@ -1,0 +1,20 @@
+Terminal emulation and Android terminal view
+
+Source: Termux terminal-emulator and terminal-view at v0.119.0-beta.3
+Commit: e634d8f981f48b6b89202cf0e04533f0889e03b3
+https://github.com/termux/termux-app/tree/e634d8f981f48b6b89202cf0e04533f0889e03b3
+
+The repository's LICENSE.md identifies the terminal components derived from
+Jack Palevich's Android Terminal Emulator as Apache License 2.0 material.
+https://github.com/jackpal/Android-Terminal-Emulator
+See terminal-apache-2.0.txt and android-terminal-emulator-notice.txt.
+
+Locus uses the Java renderer, key encoder, terminal emulator, and text selection
+resources. It replaces the local subprocess session with a remote byte-stream
+session, uses its own InputConnection, and limits clipboard actions to Android
+user input. The Termux application and local subprocess JNI code are excluded.
+
+The character-width tables in Termux's WcWidth are derived from wcwidth
+at commit 1b9b6585b0080ea5cb88dc9815796505724793fe under the MIT license.
+https://github.com/jquast/wcwidth/tree/1b9b6585b0080ea5cb88dc9815796505724793fe
+See wcwidth-mit.txt.

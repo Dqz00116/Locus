@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_parent_folder">Parent folder</string>
+    <string name="remote_home_folder">Remote home folder</string>
+    <string name="remote_back_to_folder">Back to folder</string>
+    <string name="remote_refresh_folder">Refresh folder</string>
+    <string name="remote_reload_preview">Reload preview</string>
+</resources>

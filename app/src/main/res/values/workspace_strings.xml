@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mount_hint">Tap a highlighted edge to place the new window.</string>
+    <string name="restore_mount_hint">Tap a highlighted edge to restore the window.</string>
+    <string name="minimize_window">Minimize</string>
+    <string name="select_minimize_hint">Tap a highlighted window to minimize it.</string>
+    <string name="select_minimize_target">Minimize window %1$d</string>
+    <string name="rename_window">Rename window</string>
+    <string name="shelf_name_hint">Name for the minimized windows list</string>
+    <string name="save_window_name">Save</string>
+    <string name="reconnect_window">Tap to reconnect</string>
+    <string name="enable_free_floating">Enable free-floating controls</string>
+    <string name="disable_free_floating">Disable free-floating controls</string>
+    <string name="drag_menu">Drag menu</string>
+    <string name="no_dock_space">Make room in the split to restore this window.</string>
+    <string name="open_native_frp">Set up FRP STCP</string>
+    <string name="use_imported_frp">Use imported STCP visitor</string>
+    <string name="native_frp_help">Locus starts the FRP visitor when you connect. Use your remote SSH account below.</string>
+    <string name="native_frp_import_hint">Choose the tablet’s frpc.toml with an STCP visitor.</string>
+    <string name="native_frp_mixed_profile">Only the selected visitor will run on this tablet.</string>
+    <string name="starting_frp">Starting FRP visitor…</string>
+    <string name="connecting_ssh">Connecting to SSH…</string>
+    <string name="frp_stcp_route_failed">The FRP visitor started, but the STCP link to the SSH host could not open. Check the remote proxy and the selected visitor settings.</string>
+    <string name="frp_ssh_response_timeout">The FRP visitor started, but the SSH server did not respond in time. Check whether the selected STCP proxy can reach the SSH service.</string>
+</resources>
