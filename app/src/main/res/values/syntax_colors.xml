@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="syntax_keyword">#2E59AF</color>
+    <color name="syntax_string">#146449</color>
+    <color name="syntax_comment">#626A78</color>
+    <color name="syntax_number">#8D4520</color>
+</resources>

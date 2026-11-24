@@ -346,7 +346,8 @@ final class RemoteBrowserView extends LinearLayout {
         String text = decodeText(bytes, textLength, truncated);
         if (text == null) return new Preview(null, null, string(R.string.remote_unsupported_format));
         if (text.isEmpty()) return new Preview(null, text, string(R.string.remote_empty_file));
-        return new Preview(null, text, truncated ? string(R.string.remote_truncated_text, TEXT_LIMIT / 1024)
+        CharSequence highlighted = SyntaxHighlight.apply(getContext(), name, text);
+        return new Preview(null, highlighted, truncated ? string(R.string.remote_truncated_text, TEXT_LIMIT / 1024)
                 : quantity(R.plurals.remote_utf8_bytes, bytes.length));
     }
 
@@ -425,7 +426,7 @@ final class RemoteBrowserView extends LinearLayout {
             image.setContentDescription(imageDescription());
             image.setImageBitmap(preview.bitmap);
             fileBody.addView(image, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
-        } else if (preview.text != null && !preview.text.isEmpty()) {
+        } else if (!TextUtils.isEmpty(preview.text)) {
             TextView text = new TextView(getContext());
             text.setTypeface(Typeface.MONOSPACE);
             text.setTextSize(14);
@@ -472,10 +473,10 @@ final class RemoteBrowserView extends LinearLayout {
 
     private static final class Preview {
         final Bitmap bitmap;
-        final String text;
+        final CharSequence text;
         final Function<Context, String> status;
 
-        Preview(Bitmap bitmap, String text, Function<Context, String> status) {
+        Preview(Bitmap bitmap, CharSequence text, Function<Context, String> status) {
             this.bitmap = bitmap;
             this.text = text;
             this.status = status;
