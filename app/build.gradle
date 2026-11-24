@@ -37,6 +37,15 @@ android {
         }
     }
 
+    splits {
+        abi {
+            enable providers.gradleProperty('locusAbiApks').map { it.toBoolean() }.getOrElse(false)
+            reset()
+            include 'arm64-v8a', 'x86_64'
+            universalApk true
+        }
+    }
+
     lint {
         error 'HardcodedText', 'SetTextI18n', 'MissingTranslation', 'ExtraTranslation', 'StringFormatMatches'
     }

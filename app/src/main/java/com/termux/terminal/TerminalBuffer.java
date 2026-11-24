@@ -1,3 +1,4 @@
+// Modified by Locus to allocate scrollback rows lazily during width reflow.
 package com.termux.terminal;
 
 import java.util.Arrays;
@@ -234,7 +235,8 @@ public final class TerminalBuffer {
             // Copy away old state and update new:
             TerminalRow[] oldLines = mLines;
             mLines = new TerminalRow[newTotalRows];
-            for (int i = 0; i < newTotalRows; i++)
+            // Scrolling during reflow allocates each history row as it is needed.
+            for (int i = 0; i < Math.min(newRows, newTotalRows); i++)
                 mLines[i] = new TerminalRow(newColumns, currentStyle);
 
             final int oldActiveTranscriptRows = mActiveTranscriptRows;
