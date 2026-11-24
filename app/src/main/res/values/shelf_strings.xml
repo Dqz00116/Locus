@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="shelf_minimized_windows">Minimized windows</string>
+    <string name="shelf_panel">Window shelf</string>
+    <string name="shelf_saved_layouts">Saved layouts</string>
+    <string name="shelf_layout_name">Layout %1$d</string>
+    <plurals name="shelf_layout_windows">
+        <item quantity="one">%1$d window</item>
+        <item quantity="other">%1$d windows</item>
+    </plurals>
+    <string name="shelf_open_layout">Open %1$s, %2$s</string>
+    <string name="shelf_layout_connection_required">Connect to the original SSH host and account to open the saved folders.</string>
+    <string name="shelf_remove_layout">Remove saved layout</string>
+    <string name="shelf_confirm_remove_layout">Remove %1$s?</string>
+    <string name="shelf_remove">Remove</string>
     <string name="shelf_terminal">Terminal</string>
     <string name="shelf_files">Files</string>
     <string name="shelf_duplicate_type">%1$s · #%2$d</string>

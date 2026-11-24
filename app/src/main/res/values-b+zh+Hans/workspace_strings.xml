@@ -6,7 +6,16 @@
     <string name="action_cancel">取消</string>
     <string name="action_ok">确定</string>
     <string name="workspace_new_window">新建窗口</string>
+    <string name="dock_swap_windows">交换两侧窗口</string>
+    <string name="dock_save_favorite">收藏布局</string>
+    <string name="dock_favorite_saved">布局已收藏到侧边栏。</string>
+    <string name="dock_favorite_exists">这个布局已收藏。</string>
+    <string name="dock_favorite_unavailable">没有足够的空间打开这个布局。</string>
     <string name="workspace_window_options">窗口选项</string>
+    <string name="focus_window_left">聚焦左侧窗口</string>
+    <string name="focus_window_right">聚焦右侧窗口</string>
+    <string name="focus_window_up">聚焦上方窗口</string>
+    <string name="focus_window_down">聚焦下方窗口</string>
     <string name="workspace_terminal_number">终端窗口 %1$d</string>
     <string name="workspace_mount_above">在上方新建窗口</string>
     <string name="workspace_mount_below">在下方新建窗口</string>
@@ -47,6 +56,7 @@
     <string name="enable_free_floating">开启控件自由悬浮</string>
     <string name="disable_free_floating">关闭控件自由悬浮</string>
     <string name="drag_menu">拖动菜单</string>
+    <string name="hold_drag_menu">长按后拖动菜单</string>
     <string name="no_dock_space">请调整分栏，为恢复的窗口留出空间。</string>
     <string name="open_native_frp">设置 FRP STCP</string>
     <string name="use_imported_frp">使用已导入的 STCP 访问端</string>

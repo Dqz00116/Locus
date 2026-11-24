@@ -1,5 +1,7 @@
 package dev.locus.app;
 
+import android.animation.ValueAnimator;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -10,10 +12,12 @@ import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewTreeObserver;
+import android.view.animation.PathInterpolator;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -21,6 +25,7 @@ import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -28,8 +33,11 @@ import java.util.List;
 final class FloatingTools {
     private static final int TARGET = 48;
     private static final int TAB = 20;
+    static final int WINDOW_TAB = 24;
     private static final int SNAP = 24;
-    private static final int ALPHA = 224;
+    private static final int WINDOW_PADDING = 4;
+    private static final PathInterpolator OPEN_INTERPOLATOR = new PathInterpolator(0.22f, 0.25f, 0f, 1f);
+    enum Kind { WORKSPACE, WINDOW, SHELF }
     private enum Edge { FLOATING, LEFT, RIGHT, TOP, BOTTOM }
 
     private final View anchor;
@@ -41,6 +49,7 @@ final class FloatingTools {
     private final ScrollView scroller;
     private final PopupWindow popup;
     private final Trigger owner;
+    private final List<View> gridActions = new ArrayList<>();
     private final Rect safe = new Rect();
     private final int[] origin = new int[2];
     private final ViewTreeObserver.OnGlobalLayoutListener reflow = this::reflow;
@@ -50,6 +59,8 @@ final class FloatingTools {
     private int width;
     private int height;
     private int actionRows;
+    private int gridColumns;
+    private int gridCell;
     private float x;
     private float y;
     private boolean hasText;
@@ -70,15 +81,17 @@ final class FloatingTools {
 
         handle = owner == null ? null : createHandle();
         if (handle != null) {
-            content.setBackground(surface(context, context.getColor(R.color.surface), 12, true));
+            boolean shelf = owner.kind == Kind.SHELF;
+            int panelColor = shelf ? owner.fillColor : context.getColor(R.color.surface);
+            content.setBackground(surface(context, panelColor, shelf ? 16 : 12, 244));
             content.setClipToOutline(true);
-            content.addView(handle, new LinearLayout.LayoutParams(-1, dp(context, 26)));
+            content.addView(handle, new LinearLayout.LayoutParams(-1, dp(context, gripHeight())));
         }
 
         actions = new LinearLayout(context);
         actions.setOrientation(LinearLayout.VERTICAL);
         if (owner == null) {
-            actions.setBackground(surface(context, context.getColor(R.color.surface), 12, false));
+            actions.setBackground(surface(context, context.getColor(R.color.surface), 12, 255));
             actions.setClipToOutline(true);
         }
         scroller = new ScrollView(context);
@@ -89,6 +102,8 @@ final class FloatingTools {
 
         popup = new PopupWindow(content, -2, -2, true);
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        popup.setAnimationStyle(0);
+        if (owner != null) popup.setElevation(dp(context, 2));
         popup.setOutsideTouchable(true);
         popup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
         if (Build.VERSION.SDK_INT >= 29) popup.setIsClippedToScreen(true);
@@ -96,6 +111,7 @@ final class FloatingTools {
             if (!focused && popup.isShowing()) popup.dismiss();
         };
         popup.setOnDismissListener(() -> {
+            finishEntrance();
             if (observer != null && observer.isAlive()) observer.removeOnGlobalLayoutListener(reflow);
             if (popupObserver != null && popupObserver.isAlive()) {
                 popupObserver.removeOnWindowFocusChangeListener(focusChanged);
@@ -108,22 +124,28 @@ final class FloatingTools {
 
     private ImageView createHandle() {
         ImageView grip = new ImageView(context);
-        if (owner.dockedIcon != 0) {
-            grip.setImageResource(owner.dockedIcon);
+        if (owner.kind == Kind.SHELF) {
+            grip.setImageResource(owner.icon);
             grip.setImageTintList(owner.iconTint);
-            grip.setBackgroundColor(owner.fillColor);
+            grip.setContentDescription(context.getString(R.string.drag_menu));
         } else {
             grip.setImageResource(R.drawable.ic_drag_handle);
+            grip.setContentDescription(context.getString(owner.kind == Kind.WINDOW
+                    ? R.string.hold_drag_window_toolbar : R.string.hold_drag_menu));
         }
         grip.setScaleType(ImageView.ScaleType.CENTER);
-        grip.setContentDescription(context.getString(R.string.drag_menu));
         grip.setOnTouchListener(new Drag(grip) {
             private float startX;
             private float startY;
             private float draggedX;
             private float draggedY;
 
+            @Override boolean requiresHold() {
+                return owner.kind != Kind.SHELF && owner.edge != Edge.FLOATING;
+            }
+
             @Override void start() {
+                finishEntrance();
                 startX = x;
                 startY = y;
                 draggingGrip = true;
@@ -137,17 +159,11 @@ final class FloatingTools {
 
             @Override void finish() {
                 draggingGrip = false;
-                float releaseX = x;
-                float releaseY = y;
-                int releaseWidth = width;
-                int releaseHeight = height;
-                if (owner.fourEdges) {
-                    // Center the shelf tab on the grip, even when the popup itself has run out of room.
-                    releaseWidth = anchor.getWidth();
-                    releaseHeight = anchor.getHeight();
-                    releaseX = draggedX + (grip.getWidth() - releaseWidth) / 2f;
-                    releaseY = draggedY + (grip.getHeight() - releaseHeight) / 2f;
-                }
+                // Use the grip's pointer position even when the popup has run out of room.
+                int releaseWidth = anchor.getWidth();
+                int releaseHeight = anchor.getHeight();
+                float releaseX = draggedX + (grip.getWidth() - releaseWidth) / 2f;
+                float releaseY = draggedY + (grip.getHeight() - releaseHeight) / 2f;
                 Edge edge = owner.dropEdge(releaseX - safe.left, releaseY - safe.top,
                         safe.right - releaseX - releaseWidth, safe.bottom - releaseY - releaseHeight);
                 host.getLocationOnScreen(origin);
@@ -163,29 +179,8 @@ final class FloatingTools {
         return grip;
     }
 
-    static void bindTrigger(ImageButton button, View host, boolean primary, boolean freeFloating, Runnable open) {
-        bindTrigger(button, host, primary ? R.drawable.ic_settings : R.drawable.ic_more,
-                primary, freeFloating, open);
-    }
-
-    static void bindTrigger(ImageButton button, View host, int icon, boolean primary,
-                            boolean freeFloating, Runnable open) {
-        Context context = button.getContext();
-        int fillColor = context.getColor(primary ? R.color.accent_surface : R.color.surface);
-        bindTrigger(button, host, icon, 0, fillColor, LocusChrome.actionText(context, primary),
-                false, freeFloating, open);
-    }
-
-    /** The shelf retains its icon and can dock at any edge of the workspace. */
-    static void bindShelfTrigger(ImageButton button, View host, int icon, int fillColor, int iconColor,
-                                 boolean freeFloating, Runnable open) {
-        bindTrigger(button, host, icon, icon, fillColor, ColorStateList.valueOf(iconColor),
-                true, freeFloating, open);
-    }
-
-    private static void bindTrigger(ImageButton button, View host, int icon, int dockedIcon, int fillColor,
-                                    ColorStateList iconTint, boolean fourEdges, boolean freeFloating, Runnable open) {
-        Trigger trigger = new Trigger(button, host, icon, dockedIcon, fillColor, iconTint, fourEdges, freeFloating);
+    static void bindTrigger(ImageButton button, View host, Kind kind, boolean freeFloating, Runnable open) {
+        Trigger trigger = new Trigger(button, host, kind, freeFloating);
         button.setTag(trigger);
         button.setOnClickListener(view -> open.run());
         button.setOnTouchListener(trigger);
@@ -219,7 +214,6 @@ final class FloatingTools {
 
     void compactRow() {
         compact = true;
-        actions.setOrientation(LinearLayout.HORIZONTAL);
     }
 
     void add(int icon, String label, boolean enabled, Runnable action) {
@@ -266,15 +260,18 @@ final class FloatingTools {
     }
 
     private void appendRow(View item, int rowHeight) {
-        if (actionRows > 0) {
+        if (usesActionGrid()) {
+            gridActions.add(item);
+            actionRows++;
+            return;
+        }
+        if (actionRows > 0 && owner == null) {
             View divider = new View(context);
             divider.setBackgroundColor(context.getColor(R.color.divider));
-            actions.addView(divider, compact ? new LinearLayout.LayoutParams(1, -1)
-                    : new LinearLayout.LayoutParams(-1, 1));
+            actions.addView(divider, new LinearLayout.LayoutParams(-1, 1));
         }
         actionRows++;
-        actions.addView(item, compact ? new LinearLayout.LayoutParams(0, dp(context, TARGET), 1)
-                : new LinearLayout.LayoutParams(-1, rowHeight));
+        actions.addView(item, new LinearLayout.LayoutParams(-1, rowHeight));
     }
 
     boolean isShowing() {
@@ -289,6 +286,7 @@ final class FloatingTools {
         if (isShowing() || !anchor.isShown() || actionRows == 0 || !visibleBounds(safe)) return;
         measurePanel();
         placeAtAnchor();
+        animateEntrance();
         observer = anchor.getViewTreeObserver();
         observer.addOnGlobalLayoutListener(reflow);
         popupObserver = content.getViewTreeObserver();
@@ -312,6 +310,27 @@ final class FloatingTools {
         place(left, top);
     }
 
+    private void animateEntrance() {
+        if (owner == null || !popup.isShowing() || !ValueAnimator.areAnimatorsEnabled()) return;
+        anchor.getLocationOnScreen(origin);
+        int travel = dp(context, 6);
+        if (owner.edge == Edge.TOP || owner.edge == Edge.BOTTOM) {
+            content.setTranslationY(owner.edge == Edge.TOP ? -travel : travel);
+        } else {
+            content.setTranslationX(Math.signum(origin[0] + anchor.getWidth() / 2f - x - width / 2f) * travel);
+        }
+        content.setAlpha(0.6f);
+        content.animate().alpha(1f).translationX(0).translationY(0)
+                .setInterpolator(OPEN_INTERPOLATOR).setDuration(160).start();
+    }
+
+    private void finishEntrance() {
+        content.animate().cancel();
+        content.setAlpha(1f);
+        content.setTranslationX(0);
+        content.setTranslationY(0);
+    }
+
     private boolean visibleBounds(Rect target) {
         anchor.getWindowVisibleDisplayFrame(target);
         host.getLocationOnScreen(origin);
@@ -324,11 +343,16 @@ final class FloatingTools {
     }
 
     private void measurePanel() {
-        int preferred = compact ? TARGET * actionRows : hasText ? 272 : TARGET;
-        width = Math.min(dp(context, preferred), safe.width());
+        if (usesActionGrid()) {
+            measureActionGrid();
+        } else {
+            int preferred = hasText ? 272 : TARGET;
+            if (owner != null) preferred = owner.kind == Kind.SHELF ? 236 : 256;
+            width = Math.min(dp(context, preferred), safe.width());
+        }
         int overhead = 0;
         if (handle != null) {
-            int handleHeight = Math.min(dp(context, 26), safe.height() / 4);
+            int handleHeight = Math.min(dp(context, gripHeight()), safe.height() / 4);
             handle.getLayoutParams().height = handleHeight;
             overhead = handleHeight;
         }
@@ -337,6 +361,38 @@ final class FloatingTools {
         int rows = Math.min(actions.getMeasuredHeight(), Math.max(1, safe.height() - overhead));
         scroller.getLayoutParams().height = rows;
         height = Math.min(safe.height(), overhead + rows);
+    }
+
+    private int gripHeight() {
+        return owner.kind == Kind.SHELF ? 32 : 24;
+    }
+
+    private boolean usesActionGrid() {
+        return compact || owner != null && owner.kind == Kind.WINDOW;
+    }
+
+    private void measureActionGrid() {
+        int padding = Math.min(dp(context, WINDOW_PADDING), Math.max(0, (safe.width() - dp(context, TARGET)) / 2));
+        int cell = Math.min(dp(context, TARGET), safe.width() - 2 * padding);
+        int columns = Math.min(actionRows, (safe.width() - 2 * padding) / cell);
+        width = 2 * padding + columns * cell;
+        actions.setPadding(padding, 0, padding, 0);
+        if (gridColumns == columns && gridCell == cell) return;
+        gridColumns = columns;
+        gridCell = cell;
+        for (View item : gridActions) {
+            if (item.getParent() instanceof LinearLayout) ((LinearLayout) item.getParent()).removeView(item);
+        }
+        actions.removeAllViews();
+        int cellHeight = dp(context, TARGET);
+        for (int start = 0; start < gridActions.size(); start += columns) {
+            LinearLayout row = new LinearLayout(context);
+            row.setGravity(Gravity.START);
+            actions.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            for (int index = start; index < Math.min(start + columns, gridActions.size()); index++) {
+                row.addView(gridActions.get(index), new LinearLayout.LayoutParams(cell, cellHeight));
+            }
+        }
     }
 
     private void reflow() {
@@ -350,7 +406,7 @@ final class FloatingTools {
         } else if (!viewport.equals(safe)) {
             safe.set(viewport);
             measurePanel();
-            if (owner != null && owner.fourEdges && owner.edge != Edge.FLOATING && !draggingGrip) {
+            if (owner != null && owner.edge != Edge.FLOATING && !draggingGrip) {
                 owner.reflow();
                 placeAtAnchor();
             } else {
@@ -374,8 +430,8 @@ final class FloatingTools {
         }
     }
 
-    private static RippleDrawable surface(Context context, int color, int radius, boolean translucent) {
-        int fill = translucent ? (color & 0x00ffffff) | (ALPHA << 24) : color;
+    private static RippleDrawable surface(Context context, int color, int radius, int opacity) {
+        int fill = (color & 0x00ffffff) | (opacity << 24);
         return new RippleDrawable(ColorStateList.valueOf(context.getColor(R.color.ripple)),
                 LocusChrome.surface(context, fill, context.getColor(R.color.divider), radius), null);
     }
@@ -397,12 +453,20 @@ final class FloatingTools {
         private boolean dragging;
         private boolean interrupted;
         private boolean handledHold;
+        private boolean dragArmed;
         private final Runnable hold;
 
         Drag(View handle) {
             this.handle = handle;
             slop = ViewConfiguration.get(handle.getContext()).getScaledTouchSlop();
-            hold = () -> handledHold = handle.performLongClick();
+            hold = () -> {
+                if (requiresHold()) {
+                    dragArmed = true;
+                    handle.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                } else {
+                    handledHold = handle.performLongClick();
+                }
+            };
         }
 
         @Override
@@ -414,6 +478,7 @@ final class FloatingTools {
                     dragging = false;
                     interrupted = false;
                     handledHold = false;
+                    dragArmed = false;
                     handle.setPressed(true);
                     // A pane tab can sit inside the dock divider's expanded drag region.
                     handle.getParent().requestDisallowInterceptTouchEvent(true);
@@ -424,9 +489,13 @@ final class FloatingTools {
                     float dx = event.getRawX() - downX;
                     float dy = event.getRawY() - downY;
                     if (!dragging && (Math.abs(dx) > slop || Math.abs(dy) > slop)) {
-                        dragging = true;
                         handle.removeCallbacks(hold);
                         handle.setPressed(false);
+                        if (requiresHold() && !dragArmed) {
+                            interrupted = true;
+                            return true;
+                        }
+                        dragging = true;
                         start();
                     }
                     if (dragging) move(dx, dy);
@@ -450,6 +519,7 @@ final class FloatingTools {
             }
         }
 
+        boolean requiresHold() { return false; }
         abstract void start();
         abstract void move(float dx, float dy);
         abstract void finish();
@@ -459,40 +529,56 @@ final class FloatingTools {
         private final ImageButton button;
         private final View host;
         private final Context context;
+        private final Kind kind;
         private final int icon;
-        private final int dockedIcon;
         private final int fillColor;
         private final ColorStateList iconTint;
-        private final boolean fourEdges;
         private final Rect bounds = new Rect();
         private final int[] hostOrigin = new int[2];
         private boolean freeFloating;
         private boolean moved;
-        private Edge edge = Edge.LEFT;
+        private Edge edge;
         private int defaultTop;
         private float left;
         private float top;
         private float startLeft;
         private float startTop;
 
-        Trigger(ImageButton button, View host, int icon, int dockedIcon, int fillColor,
-                ColorStateList iconTint, boolean fourEdges, boolean freeFloating) {
+        Trigger(ImageButton button, View host, Kind kind, boolean freeFloating) {
             super(button);
             this.button = button;
             this.host = host;
-            this.fourEdges = fourEdges;
+            this.kind = kind;
+            edge = kind == Kind.WINDOW ? Edge.BOTTOM : Edge.LEFT;
             this.freeFloating = freeFloating;
-            this.icon = icon;
-            this.dockedIcon = dockedIcon;
-            this.fillColor = fillColor;
-            this.iconTint = iconTint;
             context = button.getContext();
+            switch (kind) {
+                case WORKSPACE:
+                    icon = R.drawable.ic_settings;
+                    fillColor = context.getColor(R.color.shelf_control_fill);
+                    iconTint = ColorStateList.valueOf(context.getColor(R.color.workspace_control_icon));
+                    break;
+                case SHELF:
+                    icon = R.drawable.ic_window_shelf;
+                    fillColor = context.getColor(R.color.shelf_control_fill);
+                    iconTint = ColorStateList.valueOf(context.getColor(R.color.shelf_control_icon));
+                    break;
+                default:
+                    icon = R.drawable.ic_window_grip;
+                    fillColor = context.getColor(R.color.surface_variant);
+                    iconTint = null;
+                    break;
+            }
             style();
         }
 
         @Override void start() {
             startLeft = button.getX();
             startTop = button.getY();
+        }
+
+        @Override boolean requiresHold() {
+            return kind == Kind.WINDOW && edge != Edge.FLOATING;
         }
 
         @Override void move(float dx, float dy) {
@@ -510,7 +596,7 @@ final class FloatingTools {
         Edge dropEdge(float leftGap, float topGap, float rightGap, float bottomGap) {
             float nearest = Math.min(leftGap, rightGap);
             Edge next = leftGap <= rightGap ? Edge.LEFT : Edge.RIGHT;
-            if (fourEdges && Math.min(topGap, bottomGap) < nearest) {
+            if (Math.min(topGap, bottomGap) < nearest) {
                 nearest = Math.min(topGap, bottomGap);
                 next = topGap <= bottomGap ? Edge.TOP : Edge.BOTTOM;
             }
@@ -542,7 +628,7 @@ final class FloatingTools {
                     || host.getWidth() == 0 || host.getHeight() == 0) return;
             int hostWidth = host.getWidth();
             int hostHeight = host.getHeight();
-            if (fourEdges && host.isAttachedToWindow()) {
+            if (host.isAttachedToWindow()) {
                 host.getWindowVisibleDisplayFrame(bounds);
                 host.getLocationOnScreen(hostOrigin);
                 bounds.offset(-hostOrigin[0], -hostOrigin[1]);
@@ -550,10 +636,12 @@ final class FloatingTools {
             } else {
                 bounds.set(0, 0, hostWidth, hostHeight);
             }
-            int tab = dp(context, TAB);
+            int tab = dp(context, kind == Kind.WINDOW ? WINDOW_TAB : TAB);
+            float defaultLeft = kind == Kind.WINDOW && !moved
+                    ? (bounds.left + bounds.right - button.getWidth()) / 2f : left;
             float x = edge == Edge.LEFT ? bounds.left + tab - button.getWidth()
                     : edge == Edge.RIGHT ? bounds.right - tab
-                    : clamp(left, bounds.left, bounds.right - button.getWidth());
+                    : clamp(defaultLeft, bounds.left, bounds.right - button.getWidth());
             float y = edge == Edge.TOP ? bounds.top + tab - button.getHeight()
                     : edge == Edge.BOTTOM ? bounds.bottom - tab
                     : clamp(moved ? top : defaultTop, bounds.top, bounds.bottom - button.getHeight());
@@ -561,7 +649,7 @@ final class FloatingTools {
             button.setY(y);
 
             Rect slice = visibleTab(tab);
-            if (fourEdges) button.setClipBounds(slice);
+            button.setClipBounds(slice);
             if (Build.VERSION.SDK_INT >= 29) {
                 // Keep system navigation active outside the draggable tab.
                 List<Rect> exclusion = slice == null ? Collections.emptyList() : Collections.singletonList(slice);
@@ -584,17 +672,17 @@ final class FloatingTools {
         }
 
         private void style() {
-            int shownIcon = icon;
-            if (edge != Edge.FLOATING) shownIcon = dockedIcon != 0 ? dockedIcon
-                    : edge == Edge.LEFT ? R.drawable.ic_edge_right : R.drawable.ic_edge_left;
-            button.setImageResource(shownIcon);
+            boolean verticalGrip = kind == Kind.WINDOW && (edge == Edge.LEFT || edge == Edge.RIGHT);
+            button.setImageResource(verticalGrip ? R.drawable.ic_window_grip_vertical : icon);
             button.setImageTintList(iconTint);
+            int radius = kind == Kind.WINDOW ? 8 : 14;
             if (edge == Edge.FLOATING) {
-                button.setBackground(new InsetDrawable(surface(context, fillColor, 8, true), dp(context, 6)));
+                button.setBackground(new InsetDrawable(surface(context, fillColor, radius, 238), dp(context, 5)));
                 button.setPadding(0, 0, 0, 0);
             } else {
-                button.setBackground(surface(context, fillColor, 8, true));
-                int inset = dp(context, TARGET - TAB);
+                button.setBackground(kind == Kind.WINDOW ? LocusChrome.action(context, false)
+                        : surface(context, fillColor, radius, 238));
+                int inset = dp(context, TARGET - (kind == Kind.WINDOW ? WINDOW_TAB : TAB));
                 button.setPadding(edge == Edge.LEFT ? inset : 0, edge == Edge.TOP ? inset : 0,
                         edge == Edge.RIGHT ? inset : 0, edge == Edge.BOTTOM ? inset : 0);
             }

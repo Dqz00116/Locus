@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="hold_drag_window_toolbar">长按后拖动窗口工具栏</string>
     <string name="controls_docked_left">已停靠在左侧</string>
     <string name="controls_docked_right">已停靠在右侧</string>
     <string name="controls_docked_top">已停靠在顶部</string>

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="hold_drag_window_toolbar">Touch and hold, then drag window toolbar</string>
     <string name="controls_docked_left">Docked left</string>
     <string name="controls_docked_right">Docked right</string>
     <string name="controls_docked_top">Docked top</string>

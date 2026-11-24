@@ -22,6 +22,10 @@ import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.KeyboardShortcutGroup;
+import android.view.KeyboardShortcutInfo;
+import android.view.Menu;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -56,6 +60,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
     private enum Selection { NONE, PLACE, MINIMIZE }
 
+    private static final int WORKSPACE_MARGIN_DP = 4;
+    private static final int PANE_FOCUS_MODIFIERS = KeyEvent.META_CTRL_ON | KeyEvent.META_ALT_ON;
     private static final int PICK_SSH_KEY = 7;
     private static final int PICK_FRP_PROFILE = 8;
     private static final int PICK_SSH_CONFIG = 9;
@@ -63,8 +69,10 @@ public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newCachedThreadPool();
     private final List<WorkspacePane> panes = new ArrayList<>();
     private final List<WorkspacePane> minimized = new ArrayList<>();
+    private final List<WorkspacePane> minimizedByLayout = new ArrayList<>();
     private PaneDock dock;
     private WindowShelf shelf;
+    private FavoriteLayouts favoriteLayouts;
     private ImageButton workspaceTray;
     private View mountGuide;
     private TextView mountInstruction;
@@ -119,19 +127,23 @@ public final class MainActivity extends Activity {
         dock = new PaneDock(this);
         dock.setOnSplitMenu(this::showSplitMenu);
         FrameLayout.LayoutParams workspaceSize = new FrameLayout.LayoutParams(-1, -1);
-        workspaceSize.setMargins(dp(6), dp(6), dp(6), dp(6));
+        int margin = dp(WORKSPACE_MARGIN_DP);
+        workspaceSize.setMargins(margin, margin, margin, margin);
         root.addView(dock, workspaceSize);
 
         workspaceTray = LocusChrome.iconAction(this, R.drawable.ic_settings, getString(R.string.workspace_actions));
-        FloatingTools.bindTrigger(workspaceTray, root, true, freeFloating, () -> showWorkspaceActions(workspaceTray));
+        FloatingTools.bindTrigger(workspaceTray, root, FloatingTools.Kind.WORKSPACE,
+                freeFloating, () -> showWorkspaceActions(workspaceTray));
         FrameLayout.LayoutParams traySize = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.LEFT);
         root.addView(workspaceTray, traySize);
-        shelf = new WindowShelf(root, freeFloating, this::restoreMinimized);
+        favoriteLayouts = new FavoriteLayouts(this);
+        shelf = new WindowShelf(root, freeFloating, this::restoreMinimized, this::applyFavorite, this::removeFavorite);
         mountGuide = addMountGuide(root);
         dock.getViewTreeObserver().addOnGlobalLayoutListener(this::updateDockControls);
 
         setContentView(root);
         addInitialWindow();
+        updateShelf();
         loadSavedConnection();
     }
 
@@ -183,13 +195,15 @@ public final class MainActivity extends Activity {
         panes.add(pane);
         if (restore) {
             minimized.remove(pane);
+            minimizedByLayout.remove(pane);
             pane.setMinimized(false);
         }
         setSelection(Selection.NONE);
         refreshConnection();
         pane.focus();
-        if (!restore && hasConnection()) {
-            chooseDirectory(pane, target.directoryFor(connectedEndpoint, connectedUsername));
+        if (hasConnection()) {
+            if (restore) pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername);
+            else chooseDirectory(pane, target.directoryFor(connectedEndpoint, connectedUsername));
         }
     }
 
@@ -256,7 +270,7 @@ public final class MainActivity extends Activity {
         workspaceTray.setVisibility(selecting ? View.INVISIBLE : View.VISIBLE);
         updateMountInstruction();
         mountGuide.setVisibility(selecting ? View.VISIBLE : View.GONE);
-        shelf.update(minimized, selecting);
+        updateShelf();
         updateDockControls();
         if (selecting) mountGuide.requestFocus();
         else if (activePane != null) activePane.focus();
@@ -273,11 +287,49 @@ public final class MainActivity extends Activity {
         else finishAndRemoveTask();
     }
 
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (selection == Selection.NONE && panes.size() > 1 && event.hasModifiers(PANE_FOCUS_MODIFIERS)) {
+            int direction;
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_DPAD_LEFT: direction = View.FOCUS_LEFT; break;
+                case KeyEvent.KEYCODE_DPAD_RIGHT: direction = View.FOCUS_RIGHT; break;
+                case KeyEvent.KEYCODE_DPAD_UP: direction = View.FOCUS_UP; break;
+                case KeyEvent.KEYCODE_DPAD_DOWN: direction = View.FOCUS_DOWN; break;
+                default: return super.dispatchKeyEvent(event);
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                View target = dock.adjacentPane(selectedPane(), direction);
+                if (target instanceof WorkspacePane) ((WorkspacePane) target).focus();
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public void onProvideKeyboardShortcuts(List<KeyboardShortcutGroup> data, Menu menu, int deviceId) {
+        super.onProvideKeyboardShortcuts(data, menu, deviceId);
+        data.add(new KeyboardShortcutGroup(getText(R.string.workspace_actions), Arrays.asList(
+                paneShortcut(R.string.focus_window_left, KeyEvent.KEYCODE_DPAD_LEFT),
+                paneShortcut(R.string.focus_window_right, KeyEvent.KEYCODE_DPAD_RIGHT),
+                paneShortcut(R.string.focus_window_up, KeyEvent.KEYCODE_DPAD_UP),
+                paneShortcut(R.string.focus_window_down, KeyEvent.KEYCODE_DPAD_DOWN))));
+    }
+
+    private KeyboardShortcutInfo paneShortcut(int label, int key) {
+        return new KeyboardShortcutInfo(getText(label), key, PANE_FOCUS_MODIFIERS);
+    }
+
     void activate(WorkspacePane pane) {
         if (activePane == pane || !panes.contains(pane)) return;
         if (activePane != null) activePane.setActive(false);
         activePane = pane;
         pane.setActive(true);
+    }
+
+    void focusTouchedPane(WorkspacePane pane) {
+        if (selection == Selection.NONE && activePane != pane) pane.focus();
     }
 
     void closePane(WorkspacePane pane) {
@@ -332,7 +384,6 @@ public final class MainActivity extends Activity {
         boolean browsingAtTray = false;
         for (WorkspacePane pane : panes) {
             boolean nearTray = pane.getVisibility() == View.VISIBLE && pane.getTop() == 0 && pane.getLeft() == 0;
-            pane.setTrayInset(nearTray ? dp(48) : 0);
             if (nearTray) browsingAtTray = pane.isBrowsing();
             pane.setSelecting(selection != Selection.NONE, minimizeTargets.contains(pane));
             boolean vertical = selection == Selection.PLACE && canMountWindow(pane, PaneDock.Edge.TOP);
@@ -343,7 +394,7 @@ public final class MainActivity extends Activity {
             pane.setMountVisible(PaneDock.Edge.LEFT, horizontal);
             pane.setMountVisible(PaneDock.Edge.RIGHT, horizontal);
         }
-        int controlsTop = dp(6 + WorkspacePane.MOUNT_RAIL_DP + (browsingAtTray ? 48 : 0));
+        int controlsTop = dp(WORKSPACE_MARGIN_DP + WorkspacePane.FRAME_INSET_DP + (browsingAtTray ? 48 : 0));
         FloatingTools.setDefaultTop(workspaceTray, controlsTop);
         shelf.setDefaultTop(controlsTop + dp(2 * 48));
     }
@@ -357,7 +408,156 @@ public final class MainActivity extends Activity {
             minimizeTargets = candidates;
             setSelection(Selection.MINIMIZE);
         });
+        menu.add(R.drawable.ic_swap, getString(R.string.dock_swap_windows), true, () -> dock.swap(anchor));
+        menu.add(R.drawable.ic_saved_layout, getString(R.string.dock_save_favorite), true, this::saveFavorite);
         menu.show();
+    }
+
+    private void updateShelf() {
+        shelf.update(minimized, favoriteLayouts.entries(), selection != Selection.NONE);
+    }
+
+    private void saveFavorite() {
+        String snapshot = dock.layoutSnapshot();
+        if (snapshot == null) return;
+        List<FavoriteLayouts.Directory> directories = new ArrayList<>();
+        for (View pane : dock.panesInOrder()) directories.add(((WorkspacePane) pane).favoriteDirectory());
+        if (favoriteLayouts.add(snapshot, directories)) {
+            updateShelf();
+            toast(getString(R.string.dock_favorite_saved));
+        } else {
+            toast(getString(R.string.dock_favorite_exists));
+        }
+    }
+
+    private void removeFavorite(FavoriteLayouts.Entry entry) {
+        favoriteLayouts.remove(entry);
+        updateShelf();
+    }
+
+    private void applyFavorite(FavoriteLayouts.Entry entry) {
+        if (selection != Selection.NONE) return;
+        PaneDock.Layout layout = PaneDock.parseLayout(entry.snapshot);
+        if (!dock.canRestoreLayout(layout)) {
+            toast(getString(R.string.dock_favorite_unavailable));
+            return;
+        }
+        int count = layout.paneCount();
+        List<WorkspacePane> current = new ArrayList<>();
+        for (View pane : dock.panesInOrder()) current.add((WorkspacePane) pane);
+        List<WorkspacePane> next = entry.directories.isEmpty() ? favoriteGeometryPanes(count, current)
+                : favoriteDirectoryPanes(entry.directories, current);
+        List<WorkspacePane> surplus = new ArrayList<>(current);
+        surplus.removeAll(next);
+        List<WorkspacePane> returning = new ArrayList<>(next);
+        returning.retainAll(minimized);
+
+        List<WorkspacePane> added = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            if (index < next.size() && next.get(index) != null) continue;
+            WorkspacePane pane = new WorkspacePane(this, main, io, nextPaneId++);
+            added.add(pane);
+            if (index == next.size()) next.add(pane);
+            else next.set(index, pane);
+        }
+        for (WorkspacePane pane : surplus) pane.setMinimized(true);
+        if (!dock.restoreLayout(layout, next)) {
+            for (WorkspacePane pane : surplus) pane.setMinimized(false);
+            for (WorkspacePane pane : added) pane.dispose();
+            toast(getString(R.string.dock_favorite_unavailable));
+            return;
+        }
+        panes.clear();
+        panes.addAll(next);
+        minimized.removeAll(returning);
+        minimizedByLayout.removeAll(returning);
+        for (WorkspacePane pane : returning) pane.setMinimized(false);
+        minimized.addAll(surplus);
+        minimizedByLayout.addAll(0, surplus);
+        updateShelf();
+        refreshConnection();
+        updateDockControls();
+        if (!panes.contains(activePane)) panes.get(0).focus();
+        if (!entry.directories.isEmpty()) {
+            for (int index = 0; index < count; index++) {
+                next.get(index).restoreFavoriteDirectory(entry.directories.get(index));
+            }
+            restoreFavoriteDirectories();
+        }
+    }
+
+    private List<WorkspacePane> favoriteGeometryPanes(int count, List<WorkspacePane> current) {
+        List<WorkspacePane> next = new ArrayList<>(current.subList(0, Math.min(current.size(), count)));
+        if (current.contains(activePane) && !next.contains(activePane)) next.set(count - 1, activePane);
+        int reuse = Math.min(minimizedByLayout.size(), count - next.size());
+        next.addAll(minimizedByLayout.subList(0, reuse));
+        return next;
+    }
+
+    private List<WorkspacePane> favoriteDirectoryPanes(List<FavoriteLayouts.Directory> directories,
+                                                       List<WorkspacePane> current) {
+        List<WorkspacePane> available = new ArrayList<>(current);
+        available.addAll(minimized);
+        List<WorkspacePane> next = new ArrayList<>(Collections.nCopies(directories.size(), null));
+        // Keep exact slot matches before looking for equivalent windows elsewhere.
+        for (int index = 0; index < Math.min(directories.size(), current.size()); index++) {
+            WorkspacePane pane = current.get(index);
+            if (pane.matchesFavoriteDirectory(directories.get(index))) {
+                next.set(index, pane);
+                available.remove(pane);
+            }
+        }
+        for (int index = 0; index < directories.size(); index++) {
+            if (next.get(index) == null) next.set(index, takeFavoritePane(available, directories.get(index)));
+        }
+        // A fresh workspace already has an empty pane available for its first restored directory.
+        for (int index = 0; index < directories.size(); index++) {
+            if (next.get(index) == null && directories.get(index) != null) {
+                next.set(index, takeFavoritePane(available, null));
+            }
+        }
+        return next;
+    }
+
+    private WorkspacePane takeFavoritePane(List<WorkspacePane> available, FavoriteLayouts.Directory folder) {
+        for (int index = 0; index < available.size(); index++) {
+            if (available.get(index).matchesFavoriteDirectory(folder)) return available.remove(index);
+        }
+        return null;
+    }
+
+    private void restoreFavoriteDirectories() {
+        if (hasConnection()) openFavoriteDirectories();
+        else if (connectFavorite() || connecting || loadingConnection) return;
+        showFavoriteConnectionHint();
+    }
+
+    private void showFavoriteConnectionHint() {
+        for (WorkspacePane pane : panes) {
+            if (pane.hasPendingFavoriteDirectory() && !pane.pendingFavoriteMatches(connectedEndpoint, connectedUsername)) {
+                toast(getString(R.string.shelf_layout_connection_required));
+                break;
+            }
+        }
+    }
+
+    private void openFavoriteDirectories() {
+        for (WorkspacePane pane : panes) {
+            pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername);
+        }
+    }
+
+    private boolean connectFavorite() {
+        if (connecting || loadingConnection || hasConnection()) return false;
+        SavedSshConnection saved = reusableConnection();
+        if (saved == null) return false;
+        for (WorkspacePane pane : panes) {
+            if (pane.pendingFavoriteMatches(saved.endpoint, saved.username)) {
+                connectOrConfigure(pane, false);
+                return true;
+            }
+        }
+        return false;
     }
 
     private void showWorkspaceActions(View anchor) {
@@ -434,14 +634,19 @@ public final class MainActivity extends Activity {
 
     void openEmptyWindow(WorkspacePane pane) {
         if (selection != Selection.NONE || !panes.contains(pane)) return;
-        if (hasConnection()) chooseDirectory(pane);
-        else connectOrConfigure(pane, true);
+        if (hasConnection()) {
+            if (!pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername)) chooseDirectory(pane);
+        } else {
+            connectOrConfigure(pane, true);
+        }
     }
 
     void reconnectPane(WorkspacePane pane) {
         if (connecting || loadingConnection || selection != Selection.NONE || !panes.contains(pane)) return;
         if (hasConnection()) {
-            reopenDirectory(pane, connection, pane.reconnectDirectory(connectedEndpoint, connectedUsername));
+            if (!pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername)) {
+                reopenDirectory(pane, connection, pane.reconnectDirectory(connectedEndpoint, connectedUsername));
+            }
         } else {
             connectOrConfigure(pane, true);
         }
@@ -510,6 +715,7 @@ public final class MainActivity extends Activity {
                 }
                 loadingConnection = false;
                 refreshConnection();
+                connectFavorite();
             });
         });
     }
@@ -1095,6 +1301,12 @@ public final class MainActivity extends Activity {
                 refreshConnection();
                 if (warn) toast(getString(R.string.connection_save_login_warning));
                 WorkspacePane selected = panes.contains(pane) ? pane : panes.get(0);
+                boolean selectedFavorite = selected.pendingFavoriteMatches(connectedRoute, request.username);
+                openFavoriteDirectories();
+                if (selectedFavorite) {
+                    showFavoriteConnectionHint();
+                    return;
+                }
                 String recent = connectedRoute.equals(preferences.getString("directoryEndpoint", ""))
                         && request.username.equals(preferences.getString("directoryUser", ""))
                         ? preferences.getString("directory", "") : "";

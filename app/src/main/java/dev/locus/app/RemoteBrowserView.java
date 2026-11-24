@@ -65,6 +65,7 @@ final class RemoteBrowserView extends LinearLayout {
     private boolean disposed;
     private boolean offline;
     private String directory;
+    private String openedDirectory;
     private RemoteConnection.FileEntry selectedFile;
     // Resolve display text from the current locale without reloading the remote data.
     private Function<Context, String> directoryStatus = string(R.string.remote_select_directory);
@@ -158,12 +159,17 @@ final class RemoteBrowserView extends LinearLayout {
             return new DirectoryListing(canonical, entries);
         }, result -> {
             directory = result.path;
+            openedDirectory = result.path;
             updateNavigation();
             listing.setAdapter(new FileListAdapter(result.entries));
             int count = result.entries.size();
             showStatus(count == 0 ? string(R.string.remote_empty_directory)
                     : quantity(R.plurals.remote_directory_entries, count));
         }, R.string.remote_open_directory_failed);
+    }
+
+    String openedDirectory(String fallback) {
+        return openedDirectory == null ? fallback : openedDirectory;
     }
 
     void dispose() {

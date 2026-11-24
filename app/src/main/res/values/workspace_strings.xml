@@ -9,7 +9,16 @@
     <string name="action_cancel">Cancel</string>
     <string name="action_ok">OK</string>
     <string name="workspace_new_window">New window</string>
+    <string name="dock_swap_windows">Swap sides</string>
+    <string name="dock_save_favorite">Save layout</string>
+    <string name="dock_favorite_saved">Layout saved to the sidebar.</string>
+    <string name="dock_favorite_exists">This layout is already saved.</string>
+    <string name="dock_favorite_unavailable">There is not enough space to open this layout.</string>
     <string name="workspace_window_options">Window options</string>
+    <string name="focus_window_left">Focus window to the left</string>
+    <string name="focus_window_right">Focus window to the right</string>
+    <string name="focus_window_up">Focus window above</string>
+    <string name="focus_window_down">Focus window below</string>
     <string name="workspace_terminal_number">Terminal window %1$d</string>
     <string name="workspace_mount_above">Add window above</string>
     <string name="workspace_mount_below">Add window below</string>
@@ -50,6 +59,7 @@
     <string name="enable_free_floating">Enable free-floating controls</string>
     <string name="disable_free_floating">Disable free-floating controls</string>
     <string name="drag_menu">Drag menu</string>
+    <string name="hold_drag_menu">Touch and hold to drag the menu</string>
     <string name="no_dock_space">Make room in the split to restore this window.</string>
     <string name="open_native_frp">Set up FRP STCP</string>
     <string name="use_imported_frp">Use imported STCP visitor</string>

@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="shelf_minimized_windows">最小化的窗口</string>
+    <string name="shelf_panel">窗口侧边栏</string>
+    <string name="shelf_saved_layouts">已保存的布局</string>
+    <string name="shelf_layout_name">布局 %1$d</string>
+    <plurals name="shelf_layout_windows">
+        <item quantity="other">%1$d 个窗口</item>
+    </plurals>
+    <string name="shelf_open_layout">打开%1$s，%2$s</string>
+    <string name="shelf_layout_connection_required">请连接到收藏时使用的 SSH 主机和账号，以打开已收藏的目录。</string>
+    <string name="shelf_remove_layout">移除已保存的布局</string>
+    <string name="shelf_confirm_remove_layout">移除%1$s？</string>
+    <string name="shelf_remove">移除</string>
     <string name="shelf_terminal">终端</string>
     <string name="shelf_files">文件</string>
     <string name="shelf_duplicate_type">%1$s · #%2$d</string>

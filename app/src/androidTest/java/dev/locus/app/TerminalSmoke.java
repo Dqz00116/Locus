@@ -3,7 +3,10 @@ package dev.locus.app;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.ComponentName;
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -19,6 +22,8 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Exercises the Android view's byte contract without an SSH host or installed Chinese IME. */
@@ -36,6 +41,7 @@ public final class TerminalSmoke extends Instrumentation {
         Activity activity = null;
         try {
             checkKeyboardConfiguration();
+            checkFavoriteLayouts();
             Intent intent = new Intent(getTargetContext(), MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activity = startActivitySync(intent);
@@ -48,7 +54,8 @@ public final class TerminalSmoke extends Instrumentation {
             onUi(fixture::exerciseSecondTerminal);
             onUi(fixture::exerciseRenderingAndResize);
             result.putString("stream", "\nPASS: local composition, UTF-8 commit, cancellation, focus, control keys,"
-                    + " bracketed paste, CJK rendering, independent resize and keyboard configuration.\n");
+                    + " bracketed paste, CJK rendering, independent resize, keyboard configuration"
+                    + " and favorite layout directories.\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             StringWriter trace = new StringWriter();
@@ -67,6 +74,47 @@ public final class TerminalSmoke extends Instrumentation {
                 new ComponentName(getTargetContext(), MainActivity.class), 0);
         require((workspace.configChanges & keyboardChanges) == keyboardChanges,
                 "keyboard and navigation changes must preserve the workspace Activity");
+    }
+
+    private void checkFavoriteLayouts() {
+        Context context = getTargetContext();
+        String name = "favorite_layouts_smoke_" + System.nanoTime();
+        SharedPreferences isolated = context.getSharedPreferences(name, Context.MODE_PRIVATE);
+        Context fixture = new ContextWrapper(context) {
+            @Override public SharedPreferences getSharedPreferences(String ignored, int mode) {
+                return isolated;
+            }
+        };
+        String shape = "1,h0.5,p,p";
+        FavoriteLayouts.Directory first = new FavoriteLayouts.Directory("[example.test]:22", "dev",
+                "/home/dev/项目", "/home/dev/项目/src");
+        FavoriteLayouts.Directory second = new FavoriteLayouts.Directory("[example.test]:22", "dev", "/tmp", null);
+        List<FavoriteLayouts.Directory> directories = Arrays.asList(first, second);
+        try {
+            require(isolated.edit().putString("layouts",
+                    "{\"nextId\":2,\"entries\":[{\"id\":1,\"snapshot\":\"1,h0.5,p,p\"}]}").commit(),
+                    "legacy favorite fixture written");
+            FavoriteLayouts layouts = new FavoriteLayouts(fixture);
+            require(layouts.entries().get(0).directories.isEmpty(), "legacy geometry-only favorite loaded");
+            require(layouts.add(shape, directories), "same geometry with directories adds a favorite");
+            require(!layouts.add(shape, directories), "same geometry and ordered directories deduplicated");
+            require(layouts.add(shape, Arrays.asList(second, first)), "different order adds a favorite");
+            require(layouts.add(shape, Arrays.asList(first, null)), "blank pane can be saved");
+            require(!layouts.add(shape, Collections.singletonList(first)), "different pane count rejected");
+
+            List<FavoriteLayouts.Entry> reloaded = new FavoriteLayouts(fixture).entries();
+            require(reloaded.size() == 4 && reloaded.get(1).directories.equals(directories),
+                    "selection and browser folder persist in pane order");
+            require(reloaded.get(3).directories.get(1) == null, "blank pane persists");
+            require(!reloaded.get(1).directories.get(0).matchesConnection("[other.test]:22", "dev")
+                    && !reloaded.get(1).directories.get(0).matchesConnection("[example.test]:22", "other"),
+                    "favorite paths are bound to host and account");
+            layouts.remove(reloaded.get(1));
+            require(new FavoriteLayouts(fixture).entries().size() == 3, "favorite removal persists");
+        } finally {
+            isolated.edit().clear().commit();
+            context.deleteSharedPreferences(name);
+        }
     }
 
     private void onUi(Runnable test) {

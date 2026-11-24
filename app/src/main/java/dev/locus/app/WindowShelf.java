@@ -1,9 +1,12 @@
 package dev.locus.app;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -22,7 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Workspace controls for windows kept alive outside the dock. */
+/** Restores minimized windows and saved split arrangements. */
 final class WindowShelf {
     private static final int ROW_DP = 56;
     private static final int PANEL_MARGIN_DP = 8;
@@ -30,22 +33,26 @@ final class WindowShelf {
     private final FrameLayout root;
     private final Context context;
     private final Consumer<WorkspacePane> restore;
+    private final Consumer<FavoriteLayouts.Entry> applyFavorite;
+    private final Consumer<FavoriteLayouts.Entry> removeFavorite;
     private final ImageButton handle;
     private final List<WorkspacePane> windows = new ArrayList<>();
+    private final List<FavoriteLayouts.Entry> favorites = new ArrayList<>();
     private FloatingTools menu;
     private PopupWindow previewPopup;
 
-    WindowShelf(FrameLayout root, boolean freeFloating, Consumer<WorkspacePane> restore) {
+    WindowShelf(FrameLayout root, boolean freeFloating, Consumer<WorkspacePane> restore,
+                Consumer<FavoriteLayouts.Entry> applyFavorite, Consumer<FavoriteLayouts.Entry> removeFavorite) {
         this.root = root;
         this.context = root.getContext();
         this.restore = restore;
+        this.applyFavorite = applyFavorite;
+        this.removeFavorite = removeFavorite;
 
         String label = context.getString(R.string.shelf_minimized_windows);
         handle = LocusChrome.iconAction(context, R.drawable.ic_window_shelf, label);
         handle.setVisibility(View.GONE);
-        FloatingTools.bindShelfTrigger(handle, root, R.drawable.ic_window_shelf,
-                context.getColor(R.color.shelf_control_fill), context.getColor(R.color.shelf_control_icon),
-                freeFloating, this::show);
+        FloatingTools.bindTrigger(handle, root, FloatingTools.Kind.SHELF, freeFloating, this::show);
         root.addView(handle, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.LEFT | Gravity.TOP));
         root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             if (previewPopup != null
@@ -65,67 +72,61 @@ final class WindowShelf {
 
     void refreshLocale() {
         dismiss();
-        LocusChrome.labelIcon(handle, context.getString(R.string.shelf_minimized_windows));
+        refreshHandleLabel();
         FloatingTools.refreshLocale(handle);
     }
 
-    void update(List<WorkspacePane> minimized, boolean targeting) {
-        if (!windows.equals(minimized)) {
+    void update(List<WorkspacePane> minimized, List<FavoriteLayouts.Entry> savedLayouts, boolean targeting) {
+        if (!windows.equals(minimized) || !favorites.equals(savedLayouts)) {
             dismiss();
             windows.clear();
             windows.addAll(minimized);
+            favorites.clear();
+            favorites.addAll(savedLayouts);
+            refreshHandleLabel();
         }
         if (targeting) dismiss();
-        handle.setVisibility(targeting || windows.isEmpty() ? View.GONE : View.VISIBLE);
+        boolean available = !windows.isEmpty() || !favorites.isEmpty();
+        handle.setVisibility(targeting || !available ? View.GONE : View.VISIBLE);
+    }
+
+    private void refreshHandleLabel() {
+        int label = favorites.isEmpty() ? R.string.shelf_minimized_windows
+                : windows.isEmpty() ? R.string.shelf_saved_layouts : R.string.shelf_panel;
+        LocusChrome.labelIcon(handle, context.getString(label));
     }
 
     private void show() {
-        if (windows.isEmpty() || !handle.isShown() || !handle.isAttachedToWindow()
-                || (menu != null && menu.isShowing())) return;
+        if (!handle.isShown() || !handle.isAttachedToWindow() || (menu != null && menu.isShowing())) return;
         menu = new FloatingTools(handle, root);
+        boolean grouped = !windows.isEmpty() && !favorites.isEmpty();
+        if (grouped) addHeading(R.string.shelf_minimized_windows);
         for (WorkspacePane window : windows) menu.addRow(buildEntry(window), dp(ROW_DP));
+        if (grouped) addHeading(R.string.shelf_saved_layouts);
+        for (FavoriteLayouts.Entry favorite : favorites) menu.addRow(buildFavorite(favorite), dp(ROW_DP));
         menu.show();
+    }
+
+    private void addHeading(int label) {
+        TextView title = line(context.getString(label), 12, R.color.text_secondary);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setPaddingRelative(dp(12), 0, dp(12), 0);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setAccessibilityHeading(true);
+        menu.addRow(title, dp(32));
     }
 
     private View buildEntry(WorkspacePane window) {
         String label = window.shelfLabel();
         String type = viewType(window);
         String subtitle = subtitle(window, type);
-        LinearLayout entry = new LinearLayout(context);
-        entry.setGravity(Gravity.CENTER_VERTICAL);
-        entry.setBackground(LocusChrome.action(context, false));
-        entry.setPaddingRelative(dp(12), 0, dp(12), 0);
-
-        ImageView icon = new ImageView(context);
-        icon.setImageResource(window.isBrowsing() ? R.drawable.ic_files : R.drawable.ic_terminal);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(20), dp(20));
-        iconParams.setMarginEnd(dp(10));
-        entry.addView(icon, iconParams);
-
-        LinearLayout labels = new LinearLayout(context);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-        labels.addView(line(label, 14, R.color.text_primary));
-        if (!subtitle.isEmpty()) labels.addView(line(subtitle, 12, R.color.text_secondary));
-        entry.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-
+        LinearLayout entry = buildRow(window.isBrowsing() ? R.drawable.ic_files : R.drawable.ic_terminal,
+                label, subtitle);
         String detail = window.shelfDetail();
         String description = subtitle.isEmpty() ? label : label + ", " + subtitle;
         if (!detail.isEmpty()) description += "\n" + detail;
         entry.setContentDescription(context.getString(R.string.shelf_restore, description));
-        entry.setFocusable(true);
-        entry.setAccessibilityDelegate(new View.AccessibilityDelegate() {
-            @Override
-            public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
-                super.onInitializeAccessibilityNodeInfo(host, info);
-                info.setClassName("android.widget.Button");
-                AccessibilityNodeInfo.AccessibilityAction longClick =
-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK;
-                info.removeAction(longClick);
-                info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
-                        longClick.getId(), context.getString(R.string.shelf_preview_action)));
-            }
-        });
+        setLongPressLabel(entry, R.string.shelf_preview_action);
         entry.setOnClickListener(view -> {
             dismiss();
             restore.accept(window);
@@ -135,6 +136,69 @@ final class WindowShelf {
             return true;
         });
         return entry;
+    }
+
+    private View buildFavorite(FavoriteLayouts.Entry favorite) {
+        String label = context.getString(R.string.shelf_layout_name, favorite.id);
+        String subtitle = context.getResources().getQuantityString(R.plurals.shelf_layout_windows,
+                favorite.paneCount, favorite.paneCount);
+        LinearLayout entry = buildRow(R.drawable.ic_saved_layout, label, subtitle);
+        entry.setContentDescription(context.getString(R.string.shelf_open_layout, label, subtitle));
+        setLongPressLabel(entry, R.string.shelf_remove_layout);
+        entry.setOnClickListener(view -> {
+            dismiss();
+            applyFavorite.accept(favorite);
+        });
+        entry.setOnLongClickListener(view -> {
+            dismiss();
+            new AlertDialog.Builder(context)
+                    .setTitle(context.getString(R.string.shelf_confirm_remove_layout, label))
+                    .setNegativeButton(R.string.action_cancel, null)
+                    .setPositiveButton(R.string.shelf_remove, (dialog, which) -> removeFavorite.accept(favorite))
+                    .show();
+            return true;
+        });
+        return entry;
+    }
+
+    private LinearLayout buildRow(int iconResource, String label, String subtitle) {
+        LinearLayout entry = new LinearLayout(context);
+        entry.setGravity(Gravity.CENTER_VERTICAL);
+        entry.setBackground(LocusChrome.action(context, false));
+        entry.setPaddingRelative(dp(12), 0, dp(12), 0);
+        entry.setFocusable(true);
+
+        ImageView icon = new ImageView(context);
+        icon.setImageResource(iconResource);
+        icon.setImageTintList(ColorStateList.valueOf(context.getColor(R.color.shelf_control_icon)));
+        icon.setScaleType(ImageView.ScaleType.CENTER);
+        icon.setBackground(LocusChrome.surface(context, context.getColor(R.color.shelf_control_fill), 0, 8));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(34), dp(34));
+        iconParams.setMarginEnd(dp(10));
+        entry.addView(icon, iconParams);
+
+        LinearLayout labels = new LinearLayout(context);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        labels.addView(line(label, 14, R.color.text_primary));
+        if (!subtitle.isEmpty()) labels.addView(line(subtitle, 12, R.color.text_secondary));
+        entry.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        return entry;
+    }
+
+    private void setLongPressLabel(View entry, int label) {
+        entry.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override
+            public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName("android.widget.Button");
+                AccessibilityNodeInfo.AccessibilityAction longClick =
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK;
+                info.removeAction(longClick);
+                info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
+                        longClick.getId(), context.getString(label)));
+            }
+        });
     }
 
     private String viewType(WorkspacePane window) {

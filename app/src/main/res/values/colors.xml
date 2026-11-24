@@ -9,6 +9,8 @@
     <color name="text_disabled">#848894</color>
     <color name="divider">#DCDDDF</color>
     <color name="grip">#858995</color>
+    <color name="window_grip_outline">#596678</color>
+    <color name="workspace_control_icon">#000000</color>
     <color name="accent">#1957B7</color>
     <color name="accent_surface">#E5EDFD</color>
     <color name="ripple">#24222A44</color>

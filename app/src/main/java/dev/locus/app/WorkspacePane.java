@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 final class WorkspacePane extends FrameLayout {
-    static final int MOUNT_RAIL_DP = 8;
+    static final int FRAME_INSET_DP = 2;
     private static final int MOUNT_TARGET_DP = 48;
 
     private final MainActivity activity;
@@ -57,6 +57,7 @@ final class WorkspacePane extends FrameLayout {
     private String directory = "";
     private String directoryEndpoint;
     private String directoryUsername;
+    private FavoriteLayouts.Directory pendingFavorite;
     private String shelfName = "";
     private Bitmap shelfPreview;
     private long openRequest;
@@ -70,7 +71,6 @@ final class WorkspacePane extends FrameLayout {
     private boolean canReconnect;
     private volatile boolean minimized;
     private volatile long placementGeneration;
-    private int trayInset;
     private boolean highlightedForMinimize;
     private boolean disposed;
 
@@ -83,12 +83,12 @@ final class WorkspacePane extends FrameLayout {
         frameSurface = LocusChrome.surface(activity, activity.getColor(R.color.surface_variant), 0, 14);
         setBackground(frameSurface);
         setClipToOutline(true);
-        int rail = activity.dp(MOUNT_RAIL_DP);
+        int frameInset = activity.dp(FRAME_INSET_DP);
         body = new FrameLayout(activity);
         body.setBackground(LocusChrome.surface(activity, activity.getColor(R.color.surface), 0, 12));
         body.setClipToOutline(true);
         FrameLayout.LayoutParams contentSpace = new FrameLayout.LayoutParams(-1, -1);
-        contentSpace.setMargins(rail, rail, rail, rail);
+        contentSpace.setMargins(frameInset, frameInset, frameInset, frameInset);
         addView(body, contentSpace);
 
         status = new TextView(activity);
@@ -106,14 +106,11 @@ final class WorkspacePane extends FrameLayout {
         status.setFocusable(false);
         status.setVisibility(View.GONE);
         FrameLayout.LayoutParams statusSpace = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
-        int labelMargin = rail + activity.dp(4);
-        statusSpace.setMargins(labelMargin, 0, labelMargin, labelMargin);
+        int labelMargin = frameInset + activity.dp(4);
+        statusSpace.setMargins(labelMargin, 0, labelMargin, labelMargin + activity.dp(FloatingTools.WINDOW_TAB));
         addView(status, statusSpace);
 
         terminal = new LocusTerminalView(activity);
-        terminal.setOnFocusChangeListener((view, focused) -> {
-            if (focused && !minimized) activity.activate(this);
-        });
         terminal.setListener(new LocusTerminalView.Listener() {
             @Override
             public void onInput(byte[] data) {
@@ -142,11 +139,11 @@ final class WorkspacePane extends FrameLayout {
         placeholder.setOnClickListener(view -> activity.openEmptyWindow(this));
         body.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
 
-        windowOptions = LocusChrome.iconAction(activity, R.drawable.ic_more, null);
+        windowOptions = LocusChrome.iconAction(activity, R.drawable.ic_window_grip, null);
         int target = activity.dp(MOUNT_TARGET_DP);
-        body.addView(windowOptions, new FrameLayout.LayoutParams(target, target, Gravity.TOP | Gravity.LEFT));
-        FloatingTools.bindTrigger(windowOptions, body, false, activity.freeFloating(), () -> showWindowOptions(windowOptions));
-        positionWindowOptions();
+        body.addView(windowOptions, new FrameLayout.LayoutParams(target, target, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
+        FloatingTools.bindTrigger(windowOptions, body, FloatingTools.Kind.WINDOW,
+                activity.freeFloating(), () -> showWindowOptions(windowOptions));
 
         minimizeTarget = new ImageButton(activity);
         minimizeTarget.setScaleType(ImageButton.ScaleType.CENTER);
@@ -235,6 +232,38 @@ final class WorkspacePane extends FrameLayout {
         directoryUsername = username;
     }
 
+    FavoriteLayouts.Directory favoriteDirectory() {
+        if (pendingFavorite != null) return pendingFavorite;
+        if (directory.isEmpty() || directoryEndpoint == null || directoryUsername == null) return null;
+        return new FavoriteLayouts.Directory(directoryEndpoint, directoryUsername, directory,
+                showingBrowser ? browser.openedDirectory(directory) : null);
+    }
+
+    boolean matchesFavoriteDirectory(FavoriteLayouts.Directory saved) {
+        if (saved == null) {
+            return !openingTerminal && pendingFavorite == null && directory.isEmpty() && !hasLiveTerminal();
+        }
+        return (!openingTerminal || pendingFavorite != null) && saved.equals(favoriteDirectory());
+    }
+
+    void restoreFavoriteDirectory(FavoriteLayouts.Directory saved) {
+        if (!hasLiveTerminal()) pendingFavorite = saved;
+    }
+
+    boolean hasPendingFavoriteDirectory() {
+        return pendingFavorite != null;
+    }
+
+    boolean pendingFavoriteMatches(String endpoint, String username) {
+        return pendingFavorite != null && pendingFavorite.matchesConnection(endpoint, username);
+    }
+
+    boolean openFavoriteDirectory(RemoteConnection current, String endpoint, String username) {
+        if (!pendingFavoriteMatches(endpoint, username) || hasLiveTerminal()) return false;
+        if (!openingTerminal) open(current, pendingFavorite.shell, null, pendingFavorite);
+        return true;
+    }
+
     boolean isBrowsing() {
         return showingBrowser;
     }
@@ -297,8 +326,14 @@ final class WorkspacePane extends FrameLayout {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) activity.activate(this);
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) activity.focusTouchedPane(this);
         return super.dispatchTouchEvent(event);
+    }
+
+    @Override
+    public void requestChildFocus(View child, View focused) {
+        super.requestChildFocus(child, focused);
+        if (!minimized) activity.activate(this);
     }
 
     void focus() {
@@ -313,18 +348,7 @@ final class WorkspacePane extends FrameLayout {
 
     void setActive(boolean active) {
         frameSurface.setColor(activity.getColor(active ? R.color.surface_active : R.color.surface_variant));
-    }
-
-    void setTrayInset(int insetPx) {
-        int inset = Math.max(0, insetPx);
-        if (trayInset == inset) return;
-        trayInset = inset;
-        positionWindowOptions();
-    }
-
-    private void positionWindowOptions() {
-        // Leave the browser's own folder navigation accessible above its window tools.
-        FloatingTools.setDefaultTop(windowOptions, trayInset + (showingBrowser ? activity.dp(48) : 0));
+        windowOptions.setSelected(active);
     }
 
     void setFreeFloating(boolean enabled) {
@@ -390,6 +414,12 @@ final class WorkspacePane extends FrameLayout {
     }
 
     void open(RemoteConnection connection, String directory, Runnable directoryUnavailable) {
+        open(connection, directory, directoryUnavailable, null);
+    }
+
+    private void open(RemoteConnection connection, String directory, Runnable directoryUnavailable,
+                      FavoriteLayouts.Directory favorite) {
+        pendingFavorite = favorite;
         openingTerminal = true;
         reconnectRequired = false;
         setStatus(R.string.workspace_shell_opening, true);
@@ -412,7 +442,7 @@ final class WorkspacePane extends FrameLayout {
                     RemoteConnection.Terminal channel = connection.openTerminal(selectedDirectory,
                             size.columns, size.rows, size.widthPx, size.heightPx);
                     if (trace != null) trace.record(Stage.PTY, Outcome.READY);
-                    main.post(() -> attach(request, connection, selectedDirectory, channel));
+                    main.post(() -> attach(request, connection, selectedDirectory, channel, favorite));
                 } catch (Exception failure) {
                     if (trace != null) trace.record(resolved ? Stage.PTY : Stage.SFTP,
                             resolved ? Outcome.FAILED : Outcome.PATH_UNAVAILABLE);
@@ -424,6 +454,7 @@ final class WorkspacePane extends FrameLayout {
                             return;
                         }
                         openingTerminal = false;
+                        pendingFavorite = null;
                         setStatus(() -> UiErrors.message(activity, failure), true);
                         activity.terminalEnded();
                         if (chooseAgain && connection.isOpen()) directoryUnavailable.run();
@@ -434,7 +465,7 @@ final class WorkspacePane extends FrameLayout {
     }
 
     private void attach(long request, RemoteConnection connection, String directory,
-                        RemoteConnection.Terminal channel) {
+                        RemoteConnection.Terminal channel, FavoriteLayouts.Directory favorite) {
         if (disposed || request != openRequest) {
             activity.onIo(channel::close);
             return;
@@ -445,6 +476,7 @@ final class WorkspacePane extends FrameLayout {
             return;
         }
         openingTerminal = false;
+        pendingFavorite = null;
         shellExited = false;
         this.connection = connection;
         this.directory = directory;
@@ -458,6 +490,12 @@ final class WorkspacePane extends FrameLayout {
         activity.directoryOpened(this, connection, directory);
         sendResize();
         current.reader = io.submit(() -> read(current));
+        if (favorite != null && favorite.browser != null) {
+            boolean hadFocus = terminal.hasFocus();
+            if (hadFocus) activity.hideKeyboard(terminal);
+            showBrowser(favorite.browser);
+            if (hadFocus && !minimized) browser.requestFocus();
+        }
     }
 
     private void read(TerminalRun current) {
@@ -549,21 +587,24 @@ final class WorkspacePane extends FrameLayout {
             terminal.requestFocus();
             sendResize();
         } else {
-            if (browser == null) {
-                if (connection == null || !connection.isOpen()) return;
-                browser = new RemoteBrowserView(activity, connection, io);
-                browser.setFocusableInTouchMode(true);
-                body.addView(browser, body.indexOfChild(windowOptions), new FrameLayout.LayoutParams(-1, -1));
-                browser.openDirectory(directory);
-            }
-            showingBrowser = true;
+            if (browser == null && (connection == null || !connection.isOpen())) return;
             terminal.clearFocus();
             activity.hideKeyboard(terminal);
-            terminal.setVisibility(View.GONE);
-            browser.setVisibility(View.VISIBLE);
+            showBrowser(directory);
             browser.requestFocus();
         }
-        positionWindowOptions();
+    }
+
+    private void showBrowser(String path) {
+        if (browser == null) {
+            browser = new RemoteBrowserView(activity, connection, io);
+            browser.setFocusableInTouchMode(true);
+            body.addView(browser, body.indexOfChild(windowOptions), new FrameLayout.LayoutParams(-1, -1));
+            browser.openDirectory(path);
+        }
+        showingBrowser = true;
+        terminal.setVisibility(View.GONE);
+        browser.setVisibility(View.VISIBLE);
     }
 
     private void toggleKeyboard(boolean wasVisible) {
@@ -610,10 +651,7 @@ final class WorkspacePane extends FrameLayout {
             body.removeView(browser);
             browser = null;
         }
-        if (showingBrowser) {
-            showingBrowser = false;
-            positionWindowOptions();
-        }
+        showingBrowser = false;
         terminal.setVisibility(View.VISIBLE);
     }
 
