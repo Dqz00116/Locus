@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item type="id" name="about_scroll" />
+    <string name="about_title">About %1$s</string>
+    <string name="about_navigate_back">Go back</string>
+    <string name="about_version">Version %1$s (%2$d)</string>
+    <string name="about_project">Project</string>
+    <string name="about_profile">GitHub profile</string>
+    <string name="about_repository">Source code</string>
+    <string name="about_github_username" translatable="false">Dqz00116</string>
+    <string name="about_github_repository" translatable="false">Dqz00116/Locus</string>
+    <string name="about_legal">Legal</string>
+    <string name="about_project_license">Project license</string>
+    <string name="about_mpl" translatable="false">MPL-2.0</string>
+    <string name="about_third_party">Third-party licenses</string>
+    <string name="about_license_details">License details</string>
+    <string name="about_terminal">Terminal</string>
+    <string name="about_ssh" translatable="false">SSH</string>
+    <string name="about_frp">FRP and Go</string>
+    <string name="about_termux" translatable="false">Termux</string>
+    <string name="about_android_terminal_emulator" translatable="false">Android Terminal Emulator</string>
+    <string name="about_wcwidth" translatable="false">wcwidth</string>
+    <string name="about_jsch" translatable="false">JSch</string>
+    <string name="about_jzlib" translatable="false">JZlib</string>
+    <string name="about_jbcrypt" translatable="false">jBCrypt</string>
+    <string name="about_bouncy_castle" translatable="false">Bouncy Castle</string>
+    <string name="about_android_ndk" translatable="false">Android NDK</string>
+    <string name="about_go_runtime">Go runtime</string>
+    <string name="about_yamux_source">Yamux source code</string>
+    <string name="about_link_unavailable">No app can open this link.</string>
+    <string name="about_license_unavailable">This license could not be loaded.</string>
+</resources>

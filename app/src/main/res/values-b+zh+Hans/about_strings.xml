@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_title">关于 %1$s</string>
+    <string name="about_navigate_back">返回</string>
+    <string name="about_version">版本 %1$s（%2$d）</string>
+    <string name="about_project">项目</string>
+    <string name="about_profile">GitHub 个人主页</string>
+    <string name="about_repository">源代码</string>
+    <string name="about_legal">法律信息</string>
+    <string name="about_project_license">项目许可证</string>
+    <string name="about_third_party">第三方许可证</string>
+    <string name="about_license_details">许可证详情</string>
+    <string name="about_terminal">终端</string>
+    <string name="about_frp">FRP 与 Go</string>
+    <string name="about_go_runtime">Go 运行时</string>
+    <string name="about_yamux_source">Yamux 源代码</string>
+    <string name="about_link_unavailable">没有应用可以打开此链接。</string>
+    <string name="about_license_unavailable">无法加载此许可证。</string>
+</resources>

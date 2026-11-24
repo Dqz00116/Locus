@@ -577,6 +577,8 @@ public final class MainActivity extends Activity {
         menu.addLabeled(R.drawable.ic_move, getString(freeFloating
                 ? R.string.disable_free_floating : R.string.enable_free_floating), true, this::toggleFreeFloating);
         menu.addLabeled(R.drawable.ic_language, getString(R.string.app_language), true, this::chooseLanguage);
+        menu.addLabeled(R.drawable.ic_info, getString(R.string.about_title, getText(R.string.app_name)), true,
+                () -> startActivity(new Intent(this, AboutActivity.class)));
         menu.show();
     }
 

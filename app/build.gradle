@@ -14,6 +14,28 @@ tasks.named('preBuild') {
     dependsOn 'checkFrpEngine'
 }
 
+abstract class StageProjectLicense extends DefaultTask {
+    @InputFile
+    @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getLicenseFile()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDirectory()
+
+    @TaskAction
+    void stage() {
+        def target = outputDirectory.file('licenses/mpl-2.0.txt').get().asFile.toPath()
+        java.nio.file.Files.createDirectories(target.parent)
+        java.nio.file.Files.copy(licenseFile.get().asFile.toPath(), target,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+
+def stageProjectLicense = tasks.register('stageProjectLicense', StageProjectLicense) {
+    licenseFile.set(rootProject.layout.projectDirectory.file('LICENSE'))
+    outputDirectory.set(layout.buildDirectory.dir('generated/assets/projectLicense'))
+}
+
 android {
     namespace 'dev.locus.app'
     compileSdk 34
@@ -22,8 +44,8 @@ android {
         applicationId 'dev.locus.app'
         minSdk 28
         targetSdk 34
-        versionCode 17
-        versionName '0.4.10-alpha'
+        versionCode 18
+        versionName '0.5.0-beta.1'
         testInstrumentationRunner 'dev.locus.app.TerminalSmoke'
     }
 
@@ -53,6 +75,12 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.assets.addGeneratedSourceDirectory(stageProjectLicense) { it.outputDirectory }
     }
 }
 
