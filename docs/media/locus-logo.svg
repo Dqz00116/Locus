@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="18 18 72 72" role="img" aria-labelledby="title">
+  <title id="title">Locus</title>
+  <rect x="18.5" y="18.5" width="71" height="71" rx="16.5" fill="#191919" stroke="#525252"/>
+  <path fill="#FFFFFF" fill-rule="evenodd" d="
+    M43,26 H65 A17,17 0,0 1,82 43 V65 A17,17 0,0 1,65 82 H43 A17,17 0,0 1,26 65 V43 A17,17 0,0 1,43 26 Z
+    M43,32 H47 V76 H43 A11,11 0,0 1,32 65 V43 A11,11 0,0 1,43 32 Z
+    M53,32 H65 A11,11 0,0 1,76 43 V57 H53 Z
+    M53,63 H76 V65 A11,11 0,0 1,65 76 H53 Z
+    M64.5,40 A4.5,4.5 0,1 1,64.5 49 A4.5,4.5 0,1 1,64.5 40 Z"/>
+</svg>
