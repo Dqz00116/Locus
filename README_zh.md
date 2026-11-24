@@ -20,9 +20,9 @@
 
 ---
 
-Locus 是用于远程 Linux 工作的 Android 客户端。连接主机，选好工作目录，即可使用主机上的 Shell 和命令行工具。在同一个平板工作区里，可以同时操作多个独立终端、查看远程文件。
+Locus 是面向 Android 平板的远程 Linux 工作台。通过 SSH 连接主机并选择工作目录，即可运行主机上的 Shell 和终端应用。你可以并排使用多个独立终端和远程文件预览，终端支持 Android 输入法与实体键盘。
 
-支持用 Android 输入法输入中文并选词，也可使用实体键盘操作终端和触发快捷键。
+[发布版本](https://github.com/Dqz00116/Locus/releases) · [快速开始](#快速开始)
 
 ## 功能演示
 
@@ -52,7 +52,9 @@ Locus 是用于远程 Linux 工作的 Android 客户端。连接主机，选好�
 
 ## 快速开始
 
-**1. 安装并打开 Locus。** 从 [GitHub Releases](https://github.com/Dqz00116/Locus/releases) 下载 APK，也可以从源码构建。使用运行 Android 9 或更高版本的 arm64 或 x86_64 设备，准备一台已启用 SSH 和 SFTP 的 Linux 主机。
+### 1. 安装 Locus
+
+从 [GitHub Releases](https://github.com/Dqz00116/Locus/releases) 下载 APK，也可以从源码构建。使用运行 Android 9 或更高版本的 arm64 或 x86_64 设备，准备一台已启用 SSH 和 SFTP 的 Linux 主机。
 
 <details>
 <summary>从源码构建并安装</summary>
@@ -71,26 +73,43 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 </details>
 
-**2. 连接主机。** 打开**工作区操作 → 连接**，选择连接方式。
+### 2. 连接主机
 
-- **直连 SSH**适用于平板能通过当前网络访问主机的情况。输入 SSH 主机名或 IP 地址及端口。
-- **FRP STCP** 适用于已经通过 FRP 中继访问 SSH 的情况。导入访问端 TOML，选择通往 SSH 服务的 STCP 访问端，Locus 会在连接时运行内置访问端。[FRP STCP 示例](https://gofrp.org/en/docs/examples/stcp/)
+打开**工作区操作 → 连接**。如需修改已有连接，断开后打开**连接设置**。
 
-两种方式都用远程主机的 SSH 用户名登录，认证方式可选**密码**或 **SSH 密钥**。私钥通过 Android 文件选择器选取。首次连接时，先向主机管理员核对 SSH 指纹，再选择**信任主机**。
+#### 直连 SSH
 
-**3. 选择工作目录。** 浏览或筛选文件夹，点击**使用此目录**即可打开 Shell。要添加终端，点**新建窗口**。要查看该目录的文件，点窗口底部的短柄，再选**浏览文件**。
+平板能直接访问 SSH 主机时，选择**直连 SSH**。填写主机名或 IP 地址、端口（通常为 `22`）和 SSH 用户名。选择**密码**后输入账户密码，或选择 **SSH 密钥**，通过 Android 文件选择器选取私钥。点**连接**。
 
-## 终端输入如何工作
+<img src="./docs/media/locus-ssh.gif" width="960" alt="在 Locus 中配置直连 SSH，通过文件选择器选取私钥并打开远程目录">
 
-Android 在平板上处理输入法组合与选词。Locus 将确认后的文字编码为 UTF-8，将终端按键编码后一起通过 SSH 送到远程 Shell 或字符界面程序。
+#### FRP STCP
 
-```mermaid
-flowchart TD
-  subgraph Tablet["Android 平板"]
-    IME["Android 输入法"] --> Text["本地组合与选词 → 已确认的 UTF-8 文本"]
-    Keyboard["实体键盘"] --> Keys["终端按键编码"]
-  end
-  Text --> SSH["SSH"]
-  Keys --> SSH
-  SSH --> PTY["远程 Linux PTY · Shell / CLI / TUI"]
+已有 FRP 中继和通往 SSH 主机的 STCP 代理时，选择 **FRP STCP**。点**导入 FRP 配置**，在 Android 文件选择器里选取访问端的 `frpc.toml`。只有一个已启用的 STCP 访问端时，Locus 会自动选中。存在多个时，选择通往 SSH 的那一个。填写目标主机的 SSH 用户名，使用该账户的密码或私钥登录，再点**连接**。Locus 按导入的配置启动内置访问端。
+
+<img src="./docs/media/locus-frp.gif" width="960" alt="在 Locus 中导入 FRP STCP 访问端 TOML，再登录 SSH 并打开远程终端">
+
+<details>
+<summary>使用令牌认证的 FRP 访问端 TOML 示例</summary>
+
+```toml
+serverAddr = "frp.example.com"
+serverPort = 7000
+auth.method = "token"
+auth.token = "REPLACE_WITH_RELAY_TOKEN"
+transport.tls.enable = true
+
+[[visitors]]
+name = "ssh-visitor"
+type = "stcp"
+serverName = "ssh-proxy"
+secretKey = "REPLACE_WITH_STCP_SECRET"
 ```
+
+填入 FRP 中继的地址、端口与令牌。`serverName` 填 STCP 代理名称，`secretKey` 与该代理的共享密钥一致。SSH 登录使用目标主机上的账户。中继和代理的部署见 [FRP 官方 STCP 示例](https://gofrp.org/en/docs/examples/stcp/)。
+
+</details>
+
+### 3. 打开工作目录
+
+首次连接时，先向主机管理员核对界面显示的 SSH 指纹，再选**信任主机**。浏览或筛选文件夹，点**使用此目录**打开 Shell。点**新建窗口**可添加终端，点窗口底部短柄后选择**浏览文件**可查看目录内容。

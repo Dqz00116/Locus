@@ -20,9 +20,9 @@
 
 ---
 
-Locus is an Android client for remote Linux work. Connect to your host, pick a working directory, and use the shell and command-line tools installed there. Keep independent shells and your remote files in one tablet workspace.
+Locus is an Android tablet client for remote Linux work. Connect over SSH, choose a working directory, and run the shell or terminal apps on your host. Keep independent terminals and remote file previews side by side, with support for Android input methods and physical keyboards.
 
-Compose text with your Android IME and use a physical keyboard for terminal keys and shortcuts.
+[GitHub Releases](https://github.com/Dqz00116/Locus/releases) · [Quick Start](#quick-start)
 
 ## See Locus in action
 
@@ -52,7 +52,9 @@ Compose with Android’s Pinyin keyboard. Selecting `你好` sends the committed
 
 ## Quick Start
 
-**1. Install and open Locus.** Get the APK from [GitHub Releases](https://github.com/Dqz00116/Locus/releases) or build it from source. Use an arm64 or x86_64 device running Android 9 or later and a Linux host with SSH and SFTP enabled.
+### 1. Install Locus
+
+Get the APK from [GitHub Releases](https://github.com/Dqz00116/Locus/releases) or build it from source. Use an arm64 or x86_64 device running Android 9 or later and a Linux host with SSH and SFTP enabled.
 
 <details>
 <summary>Build and install from source</summary>
@@ -71,26 +73,43 @@ To generate per-architecture APKs alongside the universal APK, add `-PlocusAbiAp
 
 </details>
 
-**2. Connect to the host.** Open **Workspace actions → Connect**, then select a route.
+### 2. Connect to your host
 
-- **Direct SSH** if the tablet can reach the host over its network. Enter the SSH host or IP address and port.
-- **FRP STCP** if you already reach SSH through an FRP relay. Import the visitor TOML and select the STCP visitor that points to your SSH service. Locus runs the built-in visitor when you connect. [FRP STCP example](https://gofrp.org/en/docs/examples/stcp/)
+Open **Workspace actions → Connect**. To edit an existing connection, disconnect and open **Connection setup**.
 
-Both routes use the remote host’s SSH username and either a **Password** or an **SSH key**. Use the Android file picker to select your private key. On first connection, compare the displayed SSH fingerprint with one supplied by your server administrator before choosing **Trust host**.
+#### Direct SSH
 
-**3. Pick a working directory.** Browse or filter folders, then tap **Use this directory** to open a shell there. Use **New window** to add another terminal, or tap the window’s bottom grip and choose **Browse files** to open the selected folder.
+Choose **Direct SSH** when your tablet can reach the SSH host. Enter its hostname or IP address, port (usually `22`), and SSH username. Choose **Password** to enter the account password or **SSH key** to select a private key in Android’s file picker. Tap **Connect**.
 
-## How terminal input works
+<img src="./docs/media/locus-ssh.gif" width="960" alt="Direct SSH setup in Locus, including the key file picker and the remote directory chooser">
 
-Android handles composition and candidate selection on the tablet. Locus sends committed text as UTF-8 and encodes terminal keys before forwarding them to the remote shell or text-based application.
+#### FRP STCP
 
-```mermaid
-flowchart TD
-  subgraph Tablet["Android tablet"]
-    IME["Android IME"] --> Text["Local composition → committed UTF-8 text"]
-    Keyboard["Physical keyboard"] --> Keys["Terminal key encoding"]
-  end
-  Text --> SSH["SSH"]
-  Keys --> SSH
-  SSH --> PTY["Remote Linux PTY · shell / CLI / TUI"]
+Choose **FRP STCP** when an existing FRP relay and STCP proxy provide access to your SSH host. Tap **Import FRP profile** and pick your visitor `frpc.toml` in Android’s file picker. Locus selects a single enabled STCP visitor automatically. If there are several, choose the one that routes to SSH. Enter the target host’s SSH username and its password or private key, then tap **Connect**. Locus starts the built-in visitor from the imported settings.
+
+<img src="./docs/media/locus-frp.gif" width="960" alt="FRP STCP setup in Locus, from importing a visitor TOML to opening a remote shell">
+
+<details>
+<summary>Example visitor TOML for a relay that uses token authentication</summary>
+
+```toml
+serverAddr = "frp.example.com"
+serverPort = 7000
+auth.method = "token"
+auth.token = "REPLACE_WITH_RELAY_TOKEN"
+transport.tls.enable = true
+
+[[visitors]]
+name = "ssh-visitor"
+type = "stcp"
+serverName = "ssh-proxy"
+secretKey = "REPLACE_WITH_STCP_SECRET"
 ```
+
+Use your relay’s address, port, and token. Set `serverName` to the STCP proxy name and match its `secretKey`. The SSH login uses the account on the target host. See the [official FRP STCP example](https://gofrp.org/en/docs/examples/stcp/) for relay and proxy setup.
+
+</details>
+
+### 3. Open a working directory
+
+On the first connection, compare the displayed SSH fingerprint with one supplied by your server administrator before choosing **Trust host**. Browse or filter folders, then tap **Use this directory** to open a shell there. Use **New window** to add another terminal or choose **Browse files** from the window’s bottom grip.
