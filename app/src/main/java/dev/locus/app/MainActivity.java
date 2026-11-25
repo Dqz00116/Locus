@@ -1,5 +1,6 @@
 package dev.locus.app;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
@@ -7,6 +8,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
@@ -18,6 +20,7 @@ import android.os.Handler;
 import android.os.LocaleList;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -51,11 +54,14 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public final class MainActivity extends Activity {
     private enum Selection { NONE, PLACE, MINIMIZE }
@@ -65,8 +71,11 @@ public final class MainActivity extends Activity {
     private static final int PICK_SSH_KEY = 7;
     private static final int PICK_FRP_PROFILE = 8;
     private static final int PICK_SSH_CONFIG = 9;
+    private static final int WORKSPACE_NOTIFICATIONS = 10;
+    static final String WORKSPACE_NOTIFICATIONS_REQUESTED = "workspaceNotificationsRequested";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newCachedThreadPool();
+    private final Consumer<Outcome> workspaceListener = this::workspaceDisconnected;
     private final List<WorkspacePane> panes = new ArrayList<>();
     private final List<WorkspacePane> minimized = new ArrayList<>();
     private final List<WorkspacePane> minimizedByLayout = new ArrayList<>();
@@ -83,10 +92,11 @@ public final class MainActivity extends Activity {
     private List<View> minimizeTargets = Collections.emptyList();
     private boolean freeFloating;
     private WorkspacePane restoring;
-    private RemoteConnection connection;
+    private WorkspaceSession workspace;
     private DiagnosticLog diagnostics;
-    private DiagnosticLog.Trace connectionTrace;
+    private DiagnosticNetwork diagnosticNetwork;
     private DiagnosticLog.Trace pendingConnectionTrace;
+    private Object pendingConnection;
     private SshConnection.Profile lastDirect;
     private String lastUsername = "";
     private boolean preferFrp;
@@ -96,10 +106,9 @@ public final class MainActivity extends Activity {
     private SharedPreferences preferences;
     private SavedSshConnection savedConnection;
     private FrpRoute.Choice importedFrpChoice;
-    private String connectedEndpoint;
-    private String connectedUsername;
     private WorkspacePane activePane;
     private ConnectionDialog pendingPicker;
+    private AlertDialog disconnectDialog;
     private LocalCredentials credentials;
     private boolean importingProfile;
     private boolean connecting;
@@ -111,6 +120,7 @@ public final class MainActivity extends Activity {
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        workspace = ((LocusApplication) getApplication()).workspace();
         if (Build.VERSION.SDK_INT < 33) {
             legacyLanguageResources = AppLanguage.legacyResources(getBaseContext());
         } else {
@@ -119,6 +129,8 @@ public final class MainActivity extends Activity {
         displayedLocales = getResources().getConfiguration().getLocales();
         credentials = new LocalCredentials(this);
         diagnostics = DiagnosticLog.get(this);
+        recordConnectionLifecycle(state == null ? Outcome.CREATED : Outcome.RECREATED);
+        diagnosticNetwork = DiagnosticNetwork.start(this, main, diagnostics);
         preferences = getSharedPreferences("connection", MODE_PRIVATE);
         freeFloating = preferences.getBoolean("freeFloatingControls", false);
         restoreConnectionDraft();
@@ -142,9 +154,29 @@ public final class MainActivity extends Activity {
         dock.getViewTreeObserver().addOnGlobalLayoutListener(this::updateDockControls);
 
         setContentView(root);
-        addInitialWindow();
+        workspace.observe(workspaceListener);
+        if (!restoreWorkspace()) addInitialWindow();
         updateShelf();
         loadSavedConnection();
+        Intent launchIntent = getIntent();
+        if (WorkspaceService.ACTION_NOTIFICATION_EXIT.equals(launchIntent.getAction())) {
+            handleNotificationExit(launchIntent);
+            setIntent(new Intent(this, MainActivity.class));
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (WorkspaceService.ACTION_NOTIFICATION_EXIT.equals(intent.getAction())) handleNotificationExit(intent);
+    }
+
+    private void handleNotificationExit(Intent intent) {
+        // An old button must not act on a workspace connected since the notification was posted.
+        String token = workspace.notificationExitToken();
+        if (token != null && WorkspaceService.notificationExitUri(token).equals(intent.getData())) {
+            confirmDisconnect(workspace.connection(), true);
+        }
     }
 
     @Override
@@ -174,6 +206,7 @@ public final class MainActivity extends Activity {
         cancelMount.setText(getText(R.string.action_cancel));
         for (WorkspacePane pane : panes) pane.refreshLocale();
         for (WorkspacePane pane : minimized) pane.refreshLocale();
+        WorkspaceService.refreshNotification(this);
     }
 
     private void addInitialWindow() {
@@ -182,6 +215,54 @@ public final class MainActivity extends Activity {
         dock.setInitial(pane);
         refreshConnection();
         pane.focus();
+    }
+
+    WorkspaceSession workspace() { return workspace; }
+
+    private boolean restoreWorkspace() {
+        WorkspaceSession.LayoutState saved = workspace.takeLayout();
+        if (saved == null || saved.dock == null || saved.visible.isEmpty()) return false;
+        List<WorkspacePane> visible = new ArrayList<>();
+        for (int id : saved.visible.keySet()) visible.add(new WorkspacePane(this, main, io, id));
+        if (!dock.restoreRetainedLayout(saved.dock, visible)) {
+            for (WorkspacePane pane : visible) pane.releaseView();
+            return false;
+        }
+        nextPaneId = saved.nextId;
+        panes.addAll(visible);
+        WorkspacePane selected = visible.get(0);
+        for (WorkspacePane pane : visible) {
+            int id = pane.shelfId();
+            pane.restore(saved.visible.get(id), workspace.connection());
+            if (saved.activeId == id) selected = pane;
+        }
+        Map<Integer, WorkspacePane> parked = new LinkedHashMap<>();
+        for (Map.Entry<Integer, WorkspacePane.State> entry : saved.minimized.entrySet()) {
+            WorkspacePane pane = new WorkspacePane(this, main, io, entry.getKey());
+            pane.setMinimized(true);
+            pane.restore(entry.getValue(), workspace.connection());
+            minimized.add(pane);
+            parked.put(entry.getKey(), pane);
+        }
+        for (int id : saved.minimizedByLayout) minimizedByLayout.add(parked.get(id));
+        refreshConnection();
+        selected.focus();
+        return true;
+    }
+
+    private void saveWorkspace() {
+        if (panes.isEmpty()) return;
+        Map<Integer, WorkspacePane.State> visible = new LinkedHashMap<>();
+        for (View view : dock.panesInOrder()) {
+            WorkspacePane pane = (WorkspacePane) view;
+            visible.put(pane.shelfId(), pane.snapshot());
+        }
+        Map<Integer, WorkspacePane.State> parked = new LinkedHashMap<>();
+        for (WorkspacePane pane : minimized) parked.put(pane.shelfId(), pane.snapshot());
+        List<Integer> parkedByLayout = new ArrayList<>();
+        for (WorkspacePane pane : minimizedByLayout) parkedByLayout.add(pane.shelfId());
+        workspace.saveLayout(new WorkspaceSession.LayoutState(dock.retainedLayout(), visible, parked,
+                parkedByLayout, activePane == null ? -1 : activePane.shelfId(), nextPaneId));
     }
 
     void mountWindow(WorkspacePane target, PaneDock.Edge edge) {
@@ -202,8 +283,8 @@ public final class MainActivity extends Activity {
         refreshConnection();
         pane.focus();
         if (hasConnection()) {
-            if (restore) pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername);
-            else chooseDirectory(pane, target.directoryFor(connectedEndpoint, connectedUsername));
+            if (restore) pane.openFavoriteDirectory(workspace.connection(), workspace.endpoint(), workspace.username());
+            else chooseDirectory(pane, target.directoryFor(workspace.endpoint(), workspace.username()));
         }
     }
 
@@ -534,7 +615,7 @@ public final class MainActivity extends Activity {
 
     private void showFavoriteConnectionHint() {
         for (WorkspacePane pane : panes) {
-            if (pane.hasPendingFavoriteDirectory() && !pane.pendingFavoriteMatches(connectedEndpoint, connectedUsername)) {
+            if (pane.hasPendingFavoriteDirectory() && !pane.pendingFavoriteMatches(workspace.endpoint(), workspace.username())) {
                 toast(getString(R.string.shelf_layout_connection_required));
                 break;
             }
@@ -543,7 +624,7 @@ public final class MainActivity extends Activity {
 
     private void openFavoriteDirectories() {
         for (WorkspacePane pane : panes) {
-            pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername);
+            pane.openFavoriteDirectory(workspace.connection(), workspace.endpoint(), workspace.username());
         }
     }
 
@@ -574,12 +655,91 @@ public final class MainActivity extends Activity {
         }
         menu.addLabeled(R.drawable.ic_add, getString(R.string.workspace_new_window), canCreateWindow(),
                 () -> setSelection(Selection.PLACE));
-        menu.addLabeled(R.drawable.ic_move, getString(freeFloating
-                ? R.string.disable_free_floating : R.string.enable_free_floating), true, this::toggleFreeFloating);
-        menu.addLabeled(R.drawable.ic_language, getString(R.string.app_language), true, this::chooseLanguage);
+        menu.addLabeled(R.drawable.ic_settings, getString(R.string.workspace_settings), true,
+                () -> showWorkspaceSettings(anchor));
         menu.addLabeled(R.drawable.ic_info, getString(R.string.about_title, getText(R.string.app_name)), true,
                 () -> startActivity(new Intent(this, AboutActivity.class)));
         menu.show();
+    }
+
+    private void showWorkspaceSettings(View anchor) {
+        FloatingTools menu = new FloatingTools(anchor);
+        menu.addLabeled(R.drawable.ic_back, getString(R.string.workspace_back_to_actions), true,
+                () -> showWorkspaceActions(anchor));
+        menu.addLabeled(R.drawable.ic_move, getString(freeFloating
+                ? R.string.disable_free_floating : R.string.enable_free_floating), true, this::toggleFreeFloating);
+        menu.addLabeled(R.drawable.ic_settings, getString(R.string.workspace_background_settings), true,
+                this::showBackgroundSettings);
+        menu.addLabeled(R.drawable.ic_language, getString(R.string.app_language), true, this::chooseLanguage);
+        menu.show();
+    }
+
+    private void showBackgroundSettings() {
+        String instructions = getString(R.string.workspace_background_settings_message, getString(R.string.app_name));
+        boolean notificationsDisabled = !WorkspaceService.notificationsEnabled(this);
+        boolean canRequest = workspaceNotificationPermissionMissing()
+                && (!preferences.getBoolean(WORKSPACE_NOTIFICATIONS_REQUESTED, false)
+                    || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS));
+        String message = notificationsDisabled
+                ? instructions + "\n\n" + getString(R.string.workspace_background_notification_permission)
+                : instructions;
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.workspace_background_settings)
+                .setMessage(message)
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.workspace_background_open_settings, (view, which) -> {
+                    Intent settings = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", getPackageName(), null));
+                    try {
+                        startActivity(settings);
+                    } catch (ActivityNotFoundException unavailable) {
+                        toast(instructions);
+                    }
+                });
+        if (notificationsDisabled) {
+            dialog.setNeutralButton(canRequest ? R.string.workspace_background_allow_notifications
+                    : R.string.workspace_background_open_notification_settings, (view, which) -> {
+                        if (canRequest) requestWorkspaceNotifications();
+                        else openWorkspaceNotificationSettings();
+                    });
+        }
+        dialog.show();
+    }
+
+    private boolean workspaceNotificationPermissionMissing() {
+        return Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestWorkspaceNotifications() {
+        if (!workspaceNotificationPermissionMissing()) return;
+        preferences.edit().putBoolean(WORKSPACE_NOTIFICATIONS_REQUESTED, true).apply();
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, WORKSPACE_NOTIFICATIONS);
+    }
+
+    private void maybeRequestWorkspaceNotifications() {
+        if (preferences == null || destroyed || !foreground || !hasWindowFocus()
+                || !workspaceNotificationPermissionMissing()
+                || preferences.getBoolean(WORKSPACE_NOTIFICATIONS_REQUESTED, false)
+                || !WorkspaceService.isForeground(this)
+                || panes.stream().noneMatch(WorkspacePane::hasLiveTerminal)) return;
+        requestWorkspaceNotifications();
+    }
+
+    private void openWorkspaceNotificationSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+        } catch (ActivityNotFoundException unavailable) {
+            toast(getString(R.string.workspace_background_notification_permission));
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == WORKSPACE_NOTIFICATIONS && results.length > 0
+                && results[0] == PackageManager.PERMISSION_GRANTED) WorkspaceService.refreshNotification(this);
     }
 
     private void chooseLanguage() {
@@ -619,15 +779,25 @@ public final class MainActivity extends Activity {
 
     private void connectionClicked(WorkspacePane pane) {
         if (hasConnection()) {
-            new AlertDialog.Builder(this)
-                    .setTitle(R.string.connection_disconnect_title)
-                    .setMessage(R.string.connection_disconnect_message)
-                    .setNegativeButton(R.string.action_cancel, null)
-                    .setPositiveButton(R.string.connection_disconnect_confirm, (dialog, which) -> disconnect())
-                    .show();
+            confirmDisconnect(workspace.connection(), false);
         } else {
             connectOrConfigure(pane, false);
         }
+    }
+
+    private void confirmDisconnect(RemoteConnection current, boolean exitFromNotification) {
+        if (disconnectDialog != null && disconnectDialog.isShowing()) return;
+        disconnectDialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.connection_disconnect_title)
+                .setMessage(R.string.connection_disconnect_message)
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.connection_disconnect_confirm, (dialog, which) -> {
+                    if (workspace.connection() != current) return;
+                    disconnect();
+                    if (exitFromNotification) moveTaskToBack(true);
+                })
+                .show();
+        disconnectDialog.setOnDismissListener(dialog -> disconnectDialog = null);
     }
 
     private WorkspacePane selectedPane() {
@@ -637,7 +807,7 @@ public final class MainActivity extends Activity {
     void openEmptyWindow(WorkspacePane pane) {
         if (selection != Selection.NONE || !panes.contains(pane)) return;
         if (hasConnection()) {
-            if (!pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername)) chooseDirectory(pane);
+            if (!pane.openFavoriteDirectory(workspace.connection(), workspace.endpoint(), workspace.username())) chooseDirectory(pane);
         } else {
             connectOrConfigure(pane, true);
         }
@@ -645,9 +815,10 @@ public final class MainActivity extends Activity {
 
     void reconnectPane(WorkspacePane pane) {
         if (connecting || loadingConnection || selection != Selection.NONE || !panes.contains(pane)) return;
+        diagnostics.record(Stage.RECONNECT, Outcome.REQUESTED, pane.shelfId());
         if (hasConnection()) {
-            if (!pane.openFavoriteDirectory(connection, connectedEndpoint, connectedUsername)) {
-                reopenDirectory(pane, connection, pane.reconnectDirectory(connectedEndpoint, connectedUsername));
+            if (!pane.openFavoriteDirectory(workspace.connection(), workspace.endpoint(), workspace.username())) {
+                reopenDirectory(pane, workspace.connection(), pane.reconnectDirectory(workspace.endpoint(), workspace.username()));
             }
         } else {
             connectOrConfigure(pane, true);
@@ -742,7 +913,8 @@ public final class MainActivity extends Activity {
     }
 
     private boolean hasConnection() {
-        return connection != null && connection.isOpen();
+        RemoteConnection current = workspace.connection();
+        return current != null && current.isOpen();
     }
 
     private void refreshConnection() {
@@ -754,61 +926,39 @@ public final class MainActivity extends Activity {
     }
 
     void terminalEnded() {
-        if (connection != null && !connection.isOpen()) {
-            transportClosed(connection);
-        } else {
-            refreshConnection();
-        }
+        if (!workspace.checkTransport()) refreshConnection();
     }
 
-    private void transportClosed(RemoteConnection ended) {
-        if (destroyed || connection != ended) return;
-        connection = null;
-        endConnectionTrace(Outcome.TRANSPORT_LOST);
-        connectedEndpoint = null;
-        connectedUsername = null;
-        for (WorkspacePane pane : panes) pane.transportLost();
-        for (WorkspacePane pane : minimized) pane.transportLost();
-        onIo(ended::close);
+    private void workspaceDisconnected(Outcome outcome) {
+        Consumer<WorkspacePane> update = outcome == Outcome.TRANSPORT_LOST
+                ? WorkspacePane::transportLost : WorkspacePane::detach;
+        panes.forEach(update);
+        minimized.forEach(update);
         refreshConnection();
     }
 
     private void disconnect() {
-        RemoteConnection previous = connection;
-        connection = null;
-        endConnectionTrace(Outcome.DISCONNECTED);
-        connectedEndpoint = null;
-        connectedUsername = null;
-        for (WorkspacePane pane : panes) pane.detach();
-        for (WorkspacePane pane : minimized) pane.detach();
-        if (previous != null) onIo(previous::close);
-        refreshConnection();
+        workspace.disconnected();
     }
 
     DiagnosticLog.Trace diagnosticTrace(RemoteConnection target) {
-        return connection == target ? connectionTrace : null;
-    }
-
-    private void endConnectionTrace(Outcome outcome) {
-        if (connectionTrace == null) return;
-        connectionTrace.record(Stage.SESSION, outcome);
-        connectionTrace = null;
+        return workspace.connection() == target ? workspace.trace() : null;
     }
 
     void chooseDirectory(WorkspacePane pane) {
-        chooseDirectory(pane, pane.directoryFor(connectedEndpoint, connectedUsername));
+        chooseDirectory(pane, pane.directoryFor(workspace.endpoint(), workspace.username()));
     }
 
     private void chooseDirectory(WorkspacePane pane, String suggestedDirectory) {
         if (connecting) return;
-        RemoteConnection current = connection;
+        RemoteConnection current = workspace.connection();
         if (current == null || !current.isOpen()) {
             connectOrConfigure(pane, false);
             return;
         }
-        RemoteDirectoryDialog.show(this, current, io,
+        RemoteDirectoryDialog.show(this, current, io, pane.shelfId(),
                 suggestedDirectory.isEmpty() ? "~" : suggestedDirectory, directory -> {
-                    if (connection != current || !panes.contains(pane)) return;
+                    if (workspace.connection() != current || !panes.contains(pane)) return;
                     if (pane.hasLiveTerminal()) {
                         new AlertDialog.Builder(this)
                                 .setTitle(R.string.workspace_open_shell_title)
@@ -1144,7 +1294,7 @@ public final class MainActivity extends Activity {
                          boolean reopenDirectory) {
         if (connecting) return;
         if (hasConnection()) disconnect();
-        else if (connection != null) transportClosed(connection);
+        else workspace.checkTransport();
         hasDraft = true;
         preferFrp = request.frp;
         draftAuthMode = request.authMode;
@@ -1157,6 +1307,9 @@ public final class MainActivity extends Activity {
         if (direct != null) draft.putString("host", direct.host).putInt("port", direct.port);
         draft.apply();
         connecting = true;
+        Object attempt = workspace.begin();
+        pendingConnection = attempt;
+        if (!WorkspaceService.start(this)) toast(getString(R.string.workspace_background_unavailable));
         connectionProgress = request.frp ? R.string.starting_frp : R.string.connecting_ssh;
         refreshConnection();
         File pins = new File(getFilesDir(), "ssh-host-pins");
@@ -1164,14 +1317,14 @@ public final class MainActivity extends Activity {
                 request.frp ? DiagnosticLog.Route.FRP_STCP : DiagnosticLog.Route.DIRECT,
                 request.authMode == AuthMode.KEY ? DiagnosticLog.Auth.KEY : DiagnosticLog.Auth.PASSWORD);
         pendingConnectionTrace = trace;
-        trace.record(Stage.PREPARE, Outcome.STARTED);
-        io.execute(() -> establish(pane, request, approval, expected, direct, pins, reopenDirectory, trace));
+        trace.record(Stage.PREPARE, Outcome.STARTED, pane.shelfId());
+        io.execute(() -> establish(pane, request, approval, expected, direct, pins, reopenDirectory, trace, attempt));
     }
 
     private void establish(WorkspacePane pane, ConnectionDialog.Request request,
                            SshConnection.HostKeyApproval approval, SavedSshConnection expected,
                            SshConnection.Profile direct, File pins, boolean reopenDirectory,
-                           DiagnosticLog.Trace trace) {
+                           DiagnosticLog.Trace trace, Object connectionAttempt) {
         FrpRoute route = null;
         byte[] frpConfig = null;
         byte[] key = null;
@@ -1241,7 +1394,7 @@ public final class MainActivity extends Activity {
                                 if (hostVerified.compareAndSet(false, true)) {
                                     trace.record(Stage.HOST_KEY, Outcome.READY);
                                 }
-                            }, ended -> main.post(() -> transportClosed(ended)));
+                            }, workspace::transportEnded);
                     break;
                 } catch (Exception failure) {
                     if (attempt != 0 || route == null || hostVerified.get() || !foreground || destroyed
@@ -1284,22 +1437,15 @@ public final class MainActivity extends Activity {
             String connectedRoute = endpoint;
             boolean warn = saveFailed;
             main.post(() -> {
-                if (destroyed) {
-                    onIo(result::close);
+                if (destroyed || pendingConnection != connectionAttempt) {
+                    workspace.executor().execute(result::close);
                     return;
                 }
-                connection = result;
-                connectionTrace = trace;
+                pendingConnection = null;
                 pendingConnectionTrace = null;
                 if (saved != null) savedConnection = saved;
-                connectedEndpoint = connectedRoute;
-                connectedUsername = request.username;
                 connecting = false;
-                if (!result.isOpen()) {
-                    transportClosed(result);
-                    return;
-                }
-                trace.record(Stage.SESSION, Outcome.READY);
+                if (!workspace.connected(connectionAttempt, result, connectedRoute, request.username, trace)) return;
                 refreshConnection();
                 if (warn) toast(getString(R.string.connection_save_login_warning));
                 WorkspacePane selected = panes.contains(pane) ? pane : panes.get(0);
@@ -1322,10 +1468,8 @@ public final class MainActivity extends Activity {
         } catch (SshConnection.UnknownHostKeyException unknown) {
             trace.record(Stage.HOST_KEY, Outcome.APPROVAL_REQUIRED);
             main.post(() -> {
-                if (destroyed) return;
-                pendingConnectionTrace = null;
-                connecting = false;
-                refreshConnection();
+                if (destroyed || pendingConnection != connectionAttempt) return;
+                cancelConnectionAttempt();
                 new AlertDialog.Builder(this)
                         .setTitle(R.string.connection_verify_host)
                         .setMessage(getString(R.string.connection_verify_host_details,
@@ -1344,10 +1488,8 @@ public final class MainActivity extends Activity {
             trace.record(failedStage, outcome);
             int routeMessage = connectionFailureResource(route, outcome);
             main.post(() -> {
-                if (destroyed) return;
-                pendingConnectionTrace = null;
-                connecting = false;
-                refreshConnection();
+                if (destroyed || pendingConnection != connectionAttempt) return;
+                cancelConnectionAttempt();
                 AlertDialog.Builder dialog = new AlertDialog.Builder(this)
                         .setTitle(request.frp ? R.string.connection_frp_failed : R.string.connection_ssh_failed)
                         .setMessage(routeMessage == 0 ? UiErrors.message(this, failure) : getString(routeMessage))
@@ -1356,6 +1498,7 @@ public final class MainActivity extends Activity {
                     dialog.setNegativeButton(R.string.action_cancel, null)
                             .setPositiveButton(R.string.remote_retry, (view, which) -> {
                                 WorkspacePane selected = panes.contains(pane) ? pane : selectedPane();
+                                trace.record(Stage.RECONNECT, Outcome.REQUESTED, selected.shelfId());
                                 connectOrConfigure(selected, reopenDirectory);
                             });
                 } else {
@@ -1369,6 +1512,14 @@ public final class MainActivity extends Activity {
             clearBytes(key);
             clearBytes(keyToSave);
         }
+    }
+
+    private void cancelConnectionAttempt() {
+        workspace.cancel(pendingConnection);
+        pendingConnection = null;
+        pendingConnectionTrace = null;
+        connecting = false;
+        refreshConnection();
     }
 
     private static Outcome connectionFailureOutcome(FrpRoute route, Exception failure) {
@@ -1404,7 +1555,7 @@ public final class MainActivity extends Activity {
             chooseDirectory(pane, "");
         } else {
             pane.open(current, directory, () -> {
-                if (connection == current && panes.contains(pane)) chooseDirectory(pane, "");
+                if (workspace.connection() == current && panes.contains(pane)) chooseDirectory(pane, "");
             });
             pane.focus();
         }
@@ -1423,16 +1574,17 @@ public final class MainActivity extends Activity {
     }
 
     private void openShell(WorkspacePane pane, RemoteConnection current, String directory) {
-        if (connection != current || !panes.contains(pane)) return;
+        if (workspace.connection() != current || !panes.contains(pane)) return;
         pane.open(current, directory);
         pane.focus();
     }
 
     void directoryOpened(WorkspacePane pane, RemoteConnection current, String directory) {
-        if (connection == current && connectedEndpoint != null && connectedUsername != null) {
-            pane.setDirectoryIdentity(connectedEndpoint, connectedUsername);
-            preferences.edit().putString("directoryEndpoint", connectedEndpoint)
-                    .putString("directoryUser", connectedUsername).putString("directory", directory).apply();
+        if (workspace.connection() == current && workspace.endpoint() != null && workspace.username() != null) {
+            pane.setDirectoryIdentity(workspace.endpoint(), workspace.username());
+            preferences.edit().putString("directoryEndpoint", workspace.endpoint())
+                    .putString("directoryUser", workspace.username()).putString("directory", directory).apply();
+            main.post(this::maybeRequestWorkspaceNotifications);
         }
     }
 
@@ -1504,6 +1656,18 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        WorkspaceService.refreshNotification(this);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) main.post(this::maybeRequestWorkspaceNotifications);
+    }
+
+    @Override
     protected void onStop() {
         foreground = false;
         recordConnectionLifecycle(Outcome.BACKGROUNDED);
@@ -1512,17 +1676,22 @@ public final class MainActivity extends Activity {
     }
 
     private void recordConnectionLifecycle(Outcome outcome) {
-        DiagnosticLog.Trace trace = connectionTrace == null ? pendingConnectionTrace : connectionTrace;
+        DiagnosticLog.Trace trace = workspace.trace();
+        if (trace == null) trace = pendingConnectionTrace;
         if (trace != null) trace.record(Stage.LIFECYCLE, outcome);
+        else diagnostics.record(Stage.LIFECYCLE, outcome);
     }
 
     @Override
     protected void onDestroy() {
+        recordConnectionLifecycle(Outcome.DESTROYED);
         destroyed = true;
-        endConnectionTrace(Outcome.DISCONNECTED);
-        for (WorkspacePane pane : panes) pane.dispose();
-        for (WorkspacePane pane : minimized) pane.dispose();
-        if (connection != null) onIo(connection::close);
+        if (diagnosticNetwork != null) diagnosticNetwork.close();
+        workspace.cancel(pendingConnection);
+        workspace.removeObserver(workspaceListener);
+        saveWorkspace();
+        for (WorkspacePane pane : panes) pane.releaseView();
+        for (WorkspacePane pane : minimized) pane.releaseView();
         io.shutdown();
         super.onDestroy();
     }

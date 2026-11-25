@@ -56,6 +56,7 @@ public final class LocusTerminalView extends TerminalView {
     private Size size;
     private TerminalInputConnection inputConnection;
     private int backgroundColor;
+    private Integer restoredTopRow;
 
     public LocusTerminalView(Context context) {
         super(context, null);
@@ -82,23 +83,63 @@ public final class LocusTerminalView extends TerminalView {
 
     public void append(byte[] data, int offset, int count) {
         session.append(data, offset, count);
+        showTerminalOutput();
+    }
+
+    void showTerminalOutput() {
         updateBackground();
         onScreenUpdated();
         if (inputConnection != null) inputConnection.updateAnchor(false);
     }
 
     public void resetTerminal() {
+        if (size == null) size = cellSize(80, 24);
+        bindSession(new TerminalSession(size.columns, size.rows, cellWidth(), cellHeight(), data -> {
+            if (listener != null) listener.onInput(data);
+        }), 0);
+    }
+
+    int cellWidth() {
+        return Math.round(mRenderer.getFontWidth());
+    }
+
+    int cellHeight() {
+        return mRenderer.getFontLineSpacing();
+    }
+
+    void bindSession(TerminalSession session, int topRow) {
         clearInputConnection();
         stopTextSelectionMode();
-        if (size == null) size = cellSize(80, 24);
-        session = new TerminalSession(size.columns, size.rows, Math.round(mRenderer.getFontWidth()),
-                mRenderer.getFontLineSpacing(), data -> {
-                    if (listener != null) listener.onInput(data);
-                });
+        this.session = session;
+        restoredTopRow = topRow;
         attachSession(session);
+        applyRestoredScroll();
         updateBackground();
         if (isFocused() && hasWindowFocus() && inputMethod != null) inputMethod.restartInput(this);
         invalidate();
+    }
+
+    void releaseSession() {
+        clearInputConnection();
+        stopTextSelectionMode();
+        session = null;
+        listener = null;
+        restoredTopRow = null;
+        attachSession(null);
+    }
+
+    @Override
+    public void updateSize() {
+        super.updateSize();
+        applyRestoredScroll();
+    }
+
+    private void applyRestoredScroll() {
+        if (restoredTopRow != null && mEmulator != null) {
+            setTopRow(Math.max(-mEmulator.getScreen().getActiveTranscriptRows(), restoredTopRow));
+            restoredTopRow = null;
+            invalidate();
+        }
     }
 
     public void showKeyboard() {
@@ -113,6 +154,7 @@ public final class LocusTerminalView extends TerminalView {
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
         clearInputConnection();
+        if (session == null) return null;
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE;
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI
                 | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING | EditorInfo.IME_FLAG_NO_ENTER_ACTION;
@@ -133,7 +175,7 @@ public final class LocusTerminalView extends TerminalView {
         super.onWindowFocusChanged(focused);
         if (!focused) {
             clearInputConnection();
-        } else if (isFocused() && inputConnection == null && inputMethod != null) {
+        } else if (session != null && isFocused() && inputConnection == null && inputMethod != null) {
             inputMethod.restartInput(this);
         }
     }

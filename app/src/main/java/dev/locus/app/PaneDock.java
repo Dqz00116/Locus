@@ -187,6 +187,16 @@ final class PaneDock extends ViewGroup {
         return snapshot.toString();
     }
 
+    Layout retainedLayout() {
+        return root == null ? null : retainLayout(root);
+    }
+
+    private static Layout retainLayout(Node node) {
+        if (node instanceof Leaf) return Layout.PANE;
+        Split split = (Split) node;
+        return new Layout(split.vertical, split.fraction, retainLayout(split.first), retainLayout(split.second));
+    }
+
     // Preorder: a pane is p, a split is h or v followed by its first child's fraction.
     private static void appendLayout(Node node, StringBuilder snapshot) {
         if (node instanceof Leaf) {
@@ -242,7 +252,11 @@ final class PaneDock extends ViewGroup {
     }
 
     boolean restoreLayout(Layout layout, List<? extends View> panesInVisualOrder) {
-        if (!canRestoreLayout(layout) || panesInVisualOrder == null
+        return canRestoreLayout(layout) && restoreRetainedLayout(layout, panesInVisualOrder);
+    }
+
+    boolean restoreRetainedLayout(Layout layout, List<? extends View> panesInVisualOrder) {
+        if (layout == null || panesInVisualOrder == null
                 || panesInVisualOrder.size() != layout.paneCount()) return false;
         List<View> mounted = panesInOrder();
         Set<View> supplied = new HashSet<>();

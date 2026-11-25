@@ -21,6 +21,9 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 
+import dev.locus.app.DiagnosticLog.Outcome;
+import dev.locus.app.DiagnosticLog.Stage;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,6 +44,8 @@ final class RemoteDirectoryDialog {
     private final MainActivity activity;
     private final RemoteConnection connection;
     private final ExecutorService io;
+    private final DiagnosticLog.Trace trace;
+    private final int windowId;
     private final AlertDialog dialog;
     private final TextView pathLabel;
     private final TextView status;
@@ -59,16 +64,18 @@ final class RemoteDirectoryDialog {
     private String listingError;
 
     static void show(MainActivity activity, RemoteConnection connection, ExecutorService io,
-                     String initial, Consumer<String> choose) {
-        new RemoteDirectoryDialog(activity, connection, io, choose)
+                     int windowId, String initial, Consumer<String> choose) {
+        new RemoteDirectoryDialog(activity, connection, io, windowId, choose)
                 .open(initial == null || initial.isEmpty() ? "~" : initial);
     }
 
     private RemoteDirectoryDialog(MainActivity activity, RemoteConnection connection,
-                                  ExecutorService io, Consumer<String> choose) {
+                                  ExecutorService io, int windowId, Consumer<String> choose) {
         this.activity = activity;
         this.connection = connection;
         this.io = io;
+        trace = activity.diagnosticTrace(connection);
+        this.windowId = windowId;
 
         LinearLayout content = new LinearLayout(activity);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -175,7 +182,6 @@ final class RemoteDirectoryDialog {
 
     private void open(String path) {
         cancelRequest();
-        DiagnosticLog.Trace trace = activity.diagnosticTrace(connection);
         long current = generation;
         requested = path;
         canonical = null;
@@ -190,12 +196,13 @@ final class RemoteDirectoryDialog {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
         pathLabel.setText(label(path));
         status.setText(R.string.remote_loading_folders);
+        record(Outcome.STARTED);
         try {
             request = io.submit(() -> {
-                if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, DiagnosticLog.Outcome.STARTED);
                 String resolved = null;
                 List<RemoteConnection.FileEntry> entries = new ArrayList<>();
                 String error = null;
+                Outcome outcome = Outcome.READY;
                 try {
                     resolved = connection.canonicalDirectory(path);
                     if (Thread.currentThread().isInterrupted()) return;
@@ -206,21 +213,22 @@ final class RemoteDirectoryDialog {
                                     String.CASE_INSENSITIVE_ORDER).thenComparing(entry -> entry.name));
                 } catch (IOException failure) {
                     error = UiErrors.message(activity, failure);
+                    if (trace != null) outcome = DiagnosticLog.sftpOutcome(connection, failure);
                 }
                 if (Thread.currentThread().isInterrupted()) return;
-                if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, error == null
-                        ? DiagnosticLog.Outcome.READY : DiagnosticLog.Outcome.FAILED);
                 String directory = resolved;
                 String message = error;
+                Outcome result = outcome;
                 activity.runOnUiThread(() -> {
                     if (current == generation && dialog.isShowing() && !activity.isDestroyed()) {
                         request = null;
+                        record(result);
                         loaded(directory, entries, message);
                     }
                 });
             });
         } catch (RejectedExecutionException unavailable) {
-            if (trace != null) trace.record(DiagnosticLog.Stage.SFTP, DiagnosticLog.Outcome.FAILED);
+            record(Outcome.FAILED);
             loaded(null, Collections.emptyList(), activity.getString(R.string.remote_operations_unavailable));
         }
     }
@@ -263,7 +271,12 @@ final class RemoteDirectoryDialog {
         if (request != null) {
             request.cancel(true);
             request = null;
+            record(Outcome.CANCELLED);
         }
+    }
+
+    private void record(Outcome outcome) {
+        if (trace != null) trace.record(Stage.SFTP_DIRECTORY_PICKER, outcome, windowId);
     }
 
     private static String parentOf(String path) {

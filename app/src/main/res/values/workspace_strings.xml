@@ -2,6 +2,19 @@
 <resources>
     <string name="app_name" translatable="false">Locus</string>
     <string name="workspace_actions">Workspace actions</string>
+    <string name="workspace_settings">Settings</string>
+    <string name="workspace_back_to_actions">Back to main menu</string>
+    <string name="workspace_background_settings">Background activity settings</string>
+    <string name="workspace_background_settings_message">To keep your workspace active when switching apps, open Battery in system settings and choose Unrestricted for %1$s.</string>
+    <string name="workspace_background_open_settings">Open system settings</string>
+    <string name="workspace_background_unavailable">Could not start the background workspace service.</string>
+    <string name="workspace_background_notification_permission">Allow notifications to return to your workspace from the notification shade.</string>
+    <string name="workspace_background_allow_notifications">Allow notifications</string>
+    <string name="workspace_background_open_notification_settings">Notification settings</string>
+    <string name="workspace_background_notification_channel">Remote workspace</string>
+    <string name="workspace_background_notification">Tap to return to your remote workspace</string>
+    <string name="workspace_notification_return">Return</string>
+    <string name="workspace_notification_exit">Exit</string>
     <string name="app_language">Language</string>
     <string name="app_language_system">Follow system</string>
     <string name="app_language_english" translatable="false">English</string>

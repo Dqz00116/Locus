@@ -20,6 +20,9 @@ import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import dev.locus.app.DiagnosticLog.Outcome;
+import dev.locus.app.DiagnosticLog.Stage;
+
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -52,6 +55,8 @@ final class RemoteBrowserView extends LinearLayout {
 
     private final RemoteConnection connection;
     private final ExecutorService worker;
+    private final DiagnosticLog.Trace trace;
+    private final int windowId;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ImageButton back;
     private final ImageButton refresh;
@@ -61,20 +66,30 @@ final class RemoteBrowserView extends LinearLayout {
     private final FrameLayout fileBody;
 
     private Future<?> request;
+    private Stage requestStage;
     private long generation;
     private boolean disposed;
     private boolean offline;
     private String directory;
     private String openedDirectory;
+    private List<RemoteConnection.FileEntry> entries;
     private RemoteConnection.FileEntry selectedFile;
+    private Preview preview;
+    private int firstVisibleEntry;
+    private int firstVisibleEntryTop;
+    private int previewScrollY;
     // Resolve display text from the current locale without reloading the remote data.
     private Function<Context, String> directoryStatus = string(R.string.remote_select_directory);
     private Function<Context, String> previewStatus;
 
-    RemoteBrowserView(Context context, RemoteConnection connection, ExecutorService worker) {
+    RemoteBrowserView(Context context, RemoteConnection connection, ExecutorService worker,
+                      DiagnosticLog.Trace trace, int windowId) {
         super(context);
         this.connection = connection;
+        offline = connection == null;
         this.worker = worker;
+        this.trace = trace;
+        this.windowId = windowId;
         setOrientation(VERTICAL);
         setBackgroundColor(context.getColor(R.color.surface));
 
@@ -142,7 +157,12 @@ final class RemoteBrowserView extends LinearLayout {
     void openDirectory(String path) {
         if (disposed || offline) return;
         directory = path;
+        entries = null;
         selectedFile = null;
+        preview = null;
+        firstVisibleEntry = 0;
+        firstVisibleEntryTop = 0;
+        previewScrollY = 0;
         fileBody.removeAllViews();
         fileBody.setVisibility(GONE);
         listing.setVisibility(VISIBLE);
@@ -150,7 +170,7 @@ final class RemoteBrowserView extends LinearLayout {
         showStatus(string(R.string.remote_loading_directory));
         updateNavigation();
 
-        load(() -> {
+        load(Stage.SFTP_LIST, () -> {
             String canonical = connection.canonicalDirectory(path);
             List<RemoteConnection.FileEntry> entries = new ArrayList<>(connection.list(canonical));
             entries.sort(Comparator.comparing((RemoteConnection.FileEntry entry) -> !entry.directory)
@@ -158,11 +178,13 @@ final class RemoteBrowserView extends LinearLayout {
                     .thenComparing(entry -> entry.name));
             return new DirectoryListing(canonical, entries);
         }, result -> {
+            record(Stage.SFTP_LIST, Outcome.READY);
             directory = result.path;
             openedDirectory = result.path;
+            entries = result.entries;
             updateNavigation();
-            listing.setAdapter(new FileListAdapter(result.entries));
-            int count = result.entries.size();
+            listing.setAdapter(new FileListAdapter(entries));
+            int count = entries.size();
             showStatus(count == 0 ? string(R.string.remote_empty_directory)
                     : quantity(R.plurals.remote_directory_entries, count));
         }, R.string.remote_open_directory_failed);
@@ -172,9 +194,59 @@ final class RemoteBrowserView extends LinearLayout {
         return openedDirectory == null ? fallback : openedDirectory;
     }
 
+    State snapshot() {
+        View first = listing.getChildAt(0);
+        if (first != null) {
+            firstVisibleEntry = listing.getFirstVisiblePosition();
+            firstVisibleEntryTop = first.getTop() - listing.getPaddingTop();
+        }
+        View content = fileBody.getChildAt(0);
+        if (content instanceof ScrollView && content.isLaidOut()) {
+            previewScrollY = content.getScrollY();
+        }
+        return new State(this);
+    }
+
+    void restore(State state) {
+        directory = state.directory;
+        openedDirectory = state.openedDirectory;
+        entries = state.entries;
+        selectedFile = state.selectedFile;
+        preview = state.preview;
+        firstVisibleEntry = state.firstVisibleEntry;
+        firstVisibleEntryTop = state.firstVisibleEntryTop;
+        previewScrollY = state.previewScrollY;
+        directoryStatus = state.directoryStatus;
+        previewStatus = state.previewStatus;
+        offline = state.offline || connection == null || !connection.isOpen();
+
+        if (entries != null) {
+            listing.setAdapter(new FileListAdapter(entries));
+            listing.setSelectionFromTop(firstVisibleEntry, firstVisibleEntryTop);
+        }
+        fileBody.setVisibility(selectedFile == null ? GONE : VISIBLE);
+        listing.setVisibility(selectedFile == null ? VISIBLE : GONE);
+        updateNavigation();
+        if (state.pending != null) {
+            if (offline) {
+                showStatus(string(R.string.error_sftp_disconnected));
+            } else if (state.pending == Stage.SFTP_LIST) {
+                openDirectory(directory);
+            } else if (state.pending == Stage.SFTP_PREVIEW) {
+                openFile(selectedFile);
+            }
+        } else {
+            refreshStatus();
+            if (preview != null) renderPreview(preview, previewScrollY);
+        }
+    }
+
     void dispose() {
         disposed = true;
         cancelRequest();
+        record(Stage.SFTP_BROWSER, Outcome.DISCARDED);
+        entries = null;
+        preview = null;
         listing.setAdapter(null);
         fileBody.removeAllViews();
     }
@@ -183,6 +255,7 @@ final class RemoteBrowserView extends LinearLayout {
     void transportLost() {
         if (offline || disposed) return;
         offline = true;
+        record(selectedFile == null ? Stage.SFTP_LIST : Stage.SFTP_PREVIEW, Outcome.TRANSPORT_LOST);
         if (request != null) {
             cancelRequest();
             showStatus(string(R.string.error_sftp_disconnected));
@@ -193,6 +266,8 @@ final class RemoteBrowserView extends LinearLayout {
     private void openFile(RemoteConnection.FileEntry entry) {
         if (disposed || offline) return;
         selectedFile = entry;
+        preview = null;
+        previewScrollY = 0;
         String path = childPath(entry.name);
         fileBody.removeAllViews();
         fileBody.setVisibility(VISIBLE);
@@ -201,19 +276,23 @@ final class RemoteBrowserView extends LinearLayout {
 
         if (!entry.regularFile) {
             cancelRequest();
+            record(Stage.SFTP_PREVIEW, Outcome.UNSUPPORTED);
             showStatus(string(entry.symbolicLink ? R.string.remote_link_preview_unavailable
                     : R.string.remote_regular_file_preview));
             return;
         }
 
         showStatus(string(R.string.remote_loading_preview));
-        load(() -> readPreview(path, entry.name), this::showPreview, R.string.remote_read_file_failed);
+        load(Stage.SFTP_PREVIEW, () -> readPreview(path, entry.name), this::showPreview,
+                R.string.remote_read_file_failed);
     }
 
     private void goBack() {
         if (selectedFile != null) {
             cancelRequest();
             selectedFile = null;
+            preview = null;
+            previewScrollY = 0;
             fileBody.removeAllViews();
             fileBody.setVisibility(GONE);
             listing.setVisibility(VISIBLE);
@@ -285,9 +364,10 @@ final class RemoteBrowserView extends LinearLayout {
         return directory.endsWith("/") ? directory + name : directory + "/" + name;
     }
 
-    private <T> void load(Callable<T> operation, Consumer<T> complete, int failureMessage) {
+    private <T> void load(Stage stage, Callable<T> operation, Consumer<T> complete, int failureMessage) {
         cancelRequest();
         long current = generation;
+        record(stage, Outcome.STARTED);
         try {
             request = worker.submit(() -> {
                 try {
@@ -295,21 +375,27 @@ final class RemoteBrowserView extends LinearLayout {
                     main.post(() -> {
                         if (current == generation && !disposed) {
                             request = null;
+                            requestStage = null;
                             complete.accept(value);
                         }
                     });
                 } catch (Exception failure) {
                     if (Thread.currentThread().isInterrupted()) return;
+                    Outcome outcome = trace == null ? Outcome.FAILED : DiagnosticLog.sftpOutcome(connection, failure);
                     main.post(() -> {
                         if (current == generation && !disposed) {
                             request = null;
+                            requestStage = null;
+                            record(stage, outcome);
                             showStatus(context -> context.getString(
                                     failureMessage, UiErrors.message(context, failure)));
                         }
                     });
                 }
             });
+            requestStage = stage;
         } catch (RejectedExecutionException ignored) {
+            record(stage, Outcome.FAILED);
             showStatus(context -> context.getString(
                     failureMessage, context.getString(R.string.remote_operations_unavailable)));
         }
@@ -320,7 +406,13 @@ final class RemoteBrowserView extends LinearLayout {
         if (request != null) {
             request.cancel(true);
             request = null;
+            record(requestStage, Outcome.CANCELLED);
+            requestStage = null;
         }
+    }
+
+    private void record(Stage stage, Outcome outcome) {
+        if (trace != null) trace.record(stage, outcome, windowId);
     }
 
     private Preview readPreview(String path, String name) throws Exception {
@@ -424,7 +516,14 @@ final class RemoteBrowserView extends LinearLayout {
     }
 
     private void showPreview(Preview preview) {
+        this.preview = preview;
+        record(Stage.SFTP_PREVIEW, preview.bitmap == null && preview.text == null
+                ? Outcome.UNSUPPORTED : Outcome.READY);
         showStatus(preview.status);
+        renderPreview(preview, 0);
+    }
+
+    private void renderPreview(Preview preview, int scrollY) {
         if (preview.bitmap != null) {
             ImageView image = new ImageView(getContext());
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -443,6 +542,16 @@ final class RemoteBrowserView extends LinearLayout {
             text.setText(preview.text);
             ScrollView scroll = new ScrollView(getContext());
             scroll.addView(text);
+            if (scrollY > 0) {
+                scroll.addOnLayoutChangeListener(new OnLayoutChangeListener() {
+                    @Override
+                    public void onLayoutChange(View view, int left, int top, int right, int bottom,
+                                               int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                        view.removeOnLayoutChangeListener(this);
+                        view.scrollTo(0, scrollY);
+                    }
+                });
+            }
             fileBody.addView(scroll, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
         }
     }
@@ -465,6 +574,37 @@ final class RemoteBrowserView extends LinearLayout {
         if (entry.directory) return name + "/";
         if (entry.symbolicLink) return getContext().getString(R.string.remote_link_name, name);
         return name;
+    }
+
+    /** View-free state retained in memory while the Activity is being recreated. */
+    static final class State {
+        private final String directory;
+        private final String openedDirectory;
+        private final List<RemoteConnection.FileEntry> entries;
+        private final RemoteConnection.FileEntry selectedFile;
+        private final Preview preview;
+        private final int firstVisibleEntry;
+        private final int firstVisibleEntryTop;
+        private final int previewScrollY;
+        private final Function<Context, String> directoryStatus;
+        private final Function<Context, String> previewStatus;
+        private final boolean offline;
+        private final Stage pending;
+
+        private State(RemoteBrowserView browser) {
+            directory = browser.directory;
+            openedDirectory = browser.openedDirectory;
+            entries = browser.entries;
+            selectedFile = browser.selectedFile;
+            preview = browser.preview;
+            firstVisibleEntry = browser.firstVisibleEntry;
+            firstVisibleEntryTop = browser.firstVisibleEntryTop;
+            previewScrollY = browser.previewScrollY;
+            directoryStatus = browser.directoryStatus;
+            previewStatus = browser.previewStatus;
+            offline = browser.offline;
+            pending = browser.requestStage;
+        }
     }
 
     private static final class DirectoryListing {

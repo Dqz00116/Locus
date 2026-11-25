@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="workspace_actions">工作区操作</string>
+    <string name="workspace_settings">设置</string>
+    <string name="workspace_back_to_actions">返回主菜单</string>
+    <string name="workspace_background_settings">后台运行设置</string>
+    <string name="workspace_background_settings_message">要在切换应用时保留工作区，请在系统设置中打开 %1$s 的电池设置，并选择不受限制的电池使用模式。</string>
+    <string name="workspace_background_open_settings">打开系统设置</string>
+    <string name="workspace_background_unavailable">无法启动后台工作区服务。</string>
+    <string name="workspace_background_notification_permission">允许通知后，可从通知栏返回工作区。</string>
+    <string name="workspace_background_allow_notifications">允许通知</string>
+    <string name="workspace_background_open_notification_settings">通知设置</string>
+    <string name="workspace_background_notification_channel">远程工作区</string>
+    <string name="workspace_background_notification">点按可返回远程工作区</string>
+    <string name="workspace_notification_return">返回</string>
+    <string name="workspace_notification_exit">退出</string>
     <string name="app_language">语言</string>
     <string name="app_language_system">跟随系统</string>
     <string name="action_cancel">取消</string>

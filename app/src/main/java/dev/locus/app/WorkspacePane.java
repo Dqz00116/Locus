@@ -1,5 +1,6 @@
 package dev.locus.app;
 
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -19,17 +20,9 @@ import android.widget.TextView;
 import dev.locus.app.DiagnosticLog.Outcome;
 import dev.locus.app.DiagnosticLog.Stage;
 
-import java.io.IOException;
-import java.util.Arrays;
 import java.util.EnumMap;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 final class WorkspacePane extends FrameLayout {
     static final int FRAME_INSET_DP = 2;
@@ -38,8 +31,7 @@ final class WorkspacePane extends FrameLayout {
     private final MainActivity activity;
     private final Handler main;
     private final ExecutorService io;
-    private final ThreadPoolExecutor output = new ThreadPoolExecutor(
-            1, 1, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(64));
+    private final WorkspaceSession workspace;
     private final GradientDrawable frameSurface;
     private final FrameLayout body;
     private final TextView status;
@@ -53,7 +45,7 @@ final class WorkspacePane extends FrameLayout {
 
     private RemoteConnection connection;
     private RemoteBrowserView browser;
-    private volatile TerminalRun run;
+    private WorkspaceTerminal run;
     private String directory = "";
     private String directoryEndpoint;
     private String directoryUsername;
@@ -67,10 +59,9 @@ final class WorkspacePane extends FrameLayout {
     private boolean showingBrowser;
     private boolean connected;
     private int connectionProgress;
-    private Supplier<String> statusMessage;
+    private Function<Context, String> statusMessage;
     private boolean canReconnect;
-    private volatile boolean minimized;
-    private volatile long placementGeneration;
+    private boolean minimized;
     private boolean highlightedForMinimize;
     private boolean disposed;
 
@@ -79,6 +70,7 @@ final class WorkspacePane extends FrameLayout {
         this.activity = activity;
         this.main = main;
         this.io = io;
+        workspace = activity.workspace();
         this.id = id;
         frameSurface = LocusChrome.surface(activity, activity.getColor(R.color.surface_variant), 0, 14);
         setBackground(frameSurface);
@@ -113,16 +105,7 @@ final class WorkspacePane extends FrameLayout {
         terminal = new LocusTerminalView(activity);
         terminal.setListener(new LocusTerminalView.Listener() {
             @Override
-            public void onInput(byte[] data) {
-                TerminalRun current = run;
-                // A hidden live terminal still answers remote terminal capability queries.
-                if (current == null) return;
-                if (data.length > 65536) {
-                    setStatus(R.string.workspace_input_limit, true, 64);
-                    return;
-                }
-                send(current, () -> current.channel.write(data));
-            }
+            public void onInput(byte[] data) {}
 
             @Override
             public void onResize(int columns, int rows, int widthPx, int heightPx) {
@@ -312,10 +295,11 @@ final class WorkspacePane extends FrameLayout {
     void setMinimized(boolean hidden) {
         if (minimized == hidden) return;
         minimized = hidden;
-        placementGeneration++;
         if (hidden) {
-            shelfPreview = capturePreview();
+            Bitmap preview = capturePreview();
+            if (preview != null) shelfPreview = preview;
             main.removeCallbacks(flushResize);
+            if (run != null) run.invalidateResize();
             if (terminal.hasFocus() && isAttachedToWindow()) activity.hideKeyboard(terminal);
             clearFocus();
         } else {
@@ -388,8 +372,7 @@ final class WorkspacePane extends FrameLayout {
     }
 
     boolean hasLiveTerminal() {
-        TerminalRun current = run;
-        return current != null && current.channel.isOpen();
+        return run != null && run.isOpen();
     }
 
     void updateConnection(boolean connected, int progress, boolean canReconnect) {
@@ -429,23 +412,27 @@ final class WorkspacePane extends FrameLayout {
         terminal.post(() -> {
             if (disposed || request != openRequest) return;
             LocusTerminalView.Size size = terminal.getTerminalSize();
-            io.execute(() -> {
+            workspace.executor().execute(() -> {
                 boolean resolved = false;
                 try {
-                    if (trace != null) trace.record(Stage.SFTP, Outcome.STARTED);
+                    if (trace != null) trace.record(Stage.SFTP, Outcome.STARTED, id);
                     String selectedDirectory = connection.canonicalDirectory(directory);
                     resolved = true;
                     if (trace != null) {
-                        trace.record(Stage.SFTP, Outcome.READY);
-                        trace.record(Stage.PTY, Outcome.STARTED);
+                        trace.record(Stage.SFTP, Outcome.READY, id);
+                        trace.record(Stage.PTY, Outcome.STARTED, id);
                     }
                     RemoteConnection.Terminal channel = connection.openTerminal(selectedDirectory,
                             size.columns, size.rows, size.widthPx, size.heightPx);
-                    if (trace != null) trace.record(Stage.PTY, Outcome.READY);
-                    main.post(() -> attach(request, connection, selectedDirectory, channel, favorite));
+                    if (trace != null) trace.record(Stage.PTY, Outcome.READY, id);
+                    main.post(() -> attach(request, connection, selectedDirectory, channel, favorite, trace));
                 } catch (Exception failure) {
-                    if (trace != null) trace.record(resolved ? Stage.PTY : Stage.SFTP,
-                            resolved ? Outcome.FAILED : Outcome.PATH_UNAVAILABLE);
+                    if (trace != null) {
+                        Outcome outcome = resolved
+                                ? (connection.isOpen() ? Outcome.FAILED : Outcome.TRANSPORT_LOST)
+                                : DiagnosticLog.sftpOutcome(connection, failure);
+                        trace.record(resolved ? Stage.PTY : Stage.SFTP, outcome, id);
+                    }
                     boolean chooseAgain = !resolved && directoryUnavailable != null;
                     main.post(() -> {
                         if (disposed || request != openRequest) return;
@@ -455,7 +442,7 @@ final class WorkspacePane extends FrameLayout {
                         }
                         openingTerminal = false;
                         pendingFavorite = null;
-                        setStatus(() -> UiErrors.message(activity, failure), true);
+                        setStatus(context -> UiErrors.message(context, failure), true);
                         activity.terminalEnded();
                         if (chooseAgain && connection.isOpen()) directoryUnavailable.run();
                     });
@@ -465,13 +452,16 @@ final class WorkspacePane extends FrameLayout {
     }
 
     private void attach(long request, RemoteConnection connection, String directory,
-                        RemoteConnection.Terminal channel, FavoriteLayouts.Directory favorite) {
+                        RemoteConnection.Terminal channel, FavoriteLayouts.Directory favorite,
+                        DiagnosticLog.Trace trace) {
         if (disposed || request != openRequest) {
-            activity.onIo(channel::close);
+            if (trace != null) trace.record(Stage.PTY, Outcome.CANCELLED, id);
+            workspace.executor().execute(channel::close);
             return;
         }
         if (!connection.isOpen()) {
-            activity.onIo(channel::close);
+            if (trace != null) trace.record(Stage.PTY, Outcome.TRANSPORT_LOST, id);
+            workspace.executor().execute(channel::close);
             activity.terminalEnded();
             return;
         }
@@ -481,15 +471,16 @@ final class WorkspacePane extends FrameLayout {
         this.connection = connection;
         this.directory = directory;
         clearBrowser();
-        closeRun();
+        closeRun(Outcome.CANCELLED);
         placeholder.setVisibility(View.GONE);
-        terminal.resetTerminal();
-        TerminalRun current = new TerminalRun(channel);
-        run = current;
+        WorkspaceTerminal current = new WorkspaceTerminal(channel, trace, id,
+                workspace.executor(), terminal.getTerminalSize(), terminal.cellWidth(), terminal.cellHeight());
+        workspace.putTerminal(id, current);
+        bindRun(current, 0);
         setStatus(R.string.workspace_shell_active, false);
         activity.directoryOpened(this, connection, directory);
         sendResize();
-        current.reader = io.submit(() -> read(current));
+        current.start();
         if (favorite != null && favorite.browser != null) {
             boolean hadFocus = terminal.hasFocus();
             if (hadFocus) activity.hideKeyboard(terminal);
@@ -498,84 +489,61 @@ final class WorkspacePane extends FrameLayout {
         }
     }
 
-    private void read(TerminalRun current) {
-        byte[] buffer = new byte[16384];
-        Semaphore pending = new Semaphore(4);
-        Supplier<String> outcome;
-        boolean exited;
-        try {
-            int length;
-            while ((length = current.channel.read(buffer)) != -1) {
-                if (length == 0) continue;
-                pending.acquire();
-                byte[] bytes = Arrays.copyOf(buffer, length);
-                main.post(() -> {
-                    try {
-                        if (run == current) terminal.append(bytes, 0, bytes.length);
-                    } finally {
-                        pending.release();
-                    }
-                });
-            }
-            int code = current.channel.awaitExitStatus();
-            exited = code >= 0;
-            outcome = exited ? () -> activity.getString(R.string.workspace_shell_exit, code) : null;
-        } catch (InterruptedException canceled) {
-            Thread.currentThread().interrupt();
-            return;
-        } catch (Exception failure) {
-            exited = false;
-            outcome = () -> activity.getString(R.string.workspace_terminal_stopped, UiErrors.message(activity, failure));
+    private final WorkspaceTerminal.Listener terminalListener = new WorkspaceTerminal.Listener() {
+        @Override
+        public void screenChanged() {
+            terminal.showTerminalOutput();
         }
-        boolean hasExitStatus = exited;
-        Supplier<String> message = outcome;
-        main.post(() -> {
-            if (run != current) return;
-            shellExited = hasExitStatus;
-            closeRun();
-            if (message != null) {
-                setStatus(message, true);
-            } else if (connection != null && connection.isOpen()) {
-                setStatus(R.string.workspace_terminal_closed, true);
-            } else {
-                setStatus(R.string.workspace_ssh_disconnected, true);
-            }
+
+        @Override
+        public void ended(WorkspaceTerminal.End end) {
+            showTerminalEnd(end);
             activity.terminalEnded();
-        });
+        }
+
+        @Override
+        public void writeFailed(Exception failure) {
+            setStatus(context -> UiErrors.message(context, failure), true);
+        }
+
+        @Override
+        public void sendQueueFull() {
+            setStatus(R.string.workspace_send_queue_full, true);
+        }
+
+        @Override
+        public void inputTooLarge() {
+            setStatus(R.string.workspace_input_limit, true, 64);
+        }
+    };
+
+    private void bindRun(WorkspaceTerminal current, int topRow) {
+        run = current;
+        terminal.bindSession(current.session, topRow);
+        current.attachListener(terminalListener);
+    }
+
+    private void showTerminalEnd(WorkspaceTerminal.End end) {
+        shellExited = end.exitCode >= 0;
+        if (shellExited) {
+            setStatus(R.string.workspace_shell_exit, true, end.exitCode);
+        } else if (end.failure != null) {
+            setStatus(context -> context.getString(R.string.workspace_terminal_stopped,
+                    UiErrors.message(context, end.failure)), true);
+        } else {
+            setStatus(connection != null && connection.isOpen()
+                    ? R.string.workspace_terminal_closed : R.string.workspace_ssh_disconnected, true);
+        }
     }
 
     private void scheduleResize() {
         main.removeCallbacks(flushResize);
-        if (!minimized) main.postDelayed(flushResize, 60);
+        if (!minimized && !disposed) main.postDelayed(flushResize, 60);
     }
 
     private void sendResize() {
-        TerminalRun current = run;
-        if (current == null || showingBrowser || minimized || !isAttachedToWindow()) return;
-        long placement = placementGeneration;
-        LocusTerminalView.Size size = terminal.getTerminalSize();
-        send(current, () -> {
-            if (!minimized && placement == placementGeneration) {
-                current.channel.resize(size.columns, size.rows, size.widthPx, size.heightPx);
-            }
-        });
-    }
-
-    private void send(TerminalRun current, TerminalOperation operation) {
-        try {
-            output.execute(() -> {
-                if (run != current) return;
-                try {
-                    operation.run();
-                } catch (Exception failure) {
-                    main.post(() -> {
-                        if (run == current) setStatus(() -> UiErrors.message(activity, failure), true);
-                    });
-                }
-            });
-        } catch (RejectedExecutionException saturated) {
-            if (run == current) setStatus(R.string.workspace_send_queue_full, true);
-        }
+        if (run == null || showingBrowser || minimized || !isAttachedToWindow()) return;
+        run.resize(terminal.getTerminalSize());
     }
 
     private void toggleBrowser() {
@@ -597,14 +565,19 @@ final class WorkspacePane extends FrameLayout {
 
     private void showBrowser(String path) {
         if (browser == null) {
-            browser = new RemoteBrowserView(activity, connection, io);
-            browser.setFocusableInTouchMode(true);
-            body.addView(browser, body.indexOfChild(windowOptions), new FrameLayout.LayoutParams(-1, -1));
+            createBrowser();
             browser.openDirectory(path);
         }
         showingBrowser = true;
+        if (run != null) run.invalidateResize();
         terminal.setVisibility(View.GONE);
         browser.setVisibility(View.VISIBLE);
+    }
+
+    private void createBrowser() {
+        browser = new RemoteBrowserView(activity, connection, io, activity.diagnosticTrace(connection), id);
+        browser.setFocusableInTouchMode(true);
+        body.addView(browser, body.indexOfChild(windowOptions), new FrameLayout.LayoutParams(-1, -1));
     }
 
     private void toggleKeyboard(boolean wasVisible) {
@@ -614,10 +587,10 @@ final class WorkspacePane extends FrameLayout {
     }
 
     private void setStatus(int message, boolean visible, Object... args) {
-        setStatus(() -> activity.getString(message, args), visible);
+        setStatus(context -> context.getString(message, args), visible);
     }
 
-    private void setStatus(Supplier<String> message, boolean visible) {
+    private void setStatus(Function<Context, String> message, boolean visible) {
         statusMessage = message;
         status.setVisibility(visible ? View.VISIBLE : View.GONE);
         updateStatusText();
@@ -630,7 +603,7 @@ final class WorkspacePane extends FrameLayout {
                     : canReconnect ? R.string.workspace_ssh_reconnect : R.string.workspace_ssh_setup;
             status.setText(activity.getText(label));
         } else if (statusMessage != null) {
-            status.setText(statusMessage.get());
+            status.setText(statusMessage.apply(activity));
         }
         status.setClickable(retry);
         status.setFocusable(retry);
@@ -656,11 +629,12 @@ final class WorkspacePane extends FrameLayout {
     }
 
     void transportLost() {
-        boolean affected = openingTerminal || run != null || browser != null || (connection != null && !shellExited);
+        boolean affected = openingTerminal || (run != null && !shellExited)
+                || browser != null || (connection != null && !shellExited);
         ++openRequest;
         openingTerminal = false;
         connection = null;
-        closeRun();
+        closeRun(Outcome.TRANSPORT_LOST);
         if (browser != null) browser.transportLost();
         if (affected) {
             reconnectRequired = !directory.isEmpty();
@@ -675,38 +649,107 @@ final class WorkspacePane extends FrameLayout {
         shelfPreview = null;
         connection = null;
         clearBrowser();
-        closeRun();
+        closeRun(Outcome.CANCELLED);
         setStatus(R.string.workspace_ssh_disconnected, !directory.isEmpty());
         updatePlaceholder();
     }
 
-    private void closeRun() {
-        TerminalRun previous = run;
+    private void closeRun(Outcome outcome) {
+        WorkspaceTerminal previous = run;
         run = null;
         main.removeCallbacks(flushResize);
-        output.getQueue().clear();
         if (previous == null) return;
-        if (previous.reader != null) previous.reader.cancel(true);
-        activity.onIo(previous.channel::close);
+        previous.detachListener(terminalListener);
+        workspace.removeTerminal(id, previous);
+        previous.close(outcome);
+    }
+
+    State snapshot() {
+        return new State(this);
+    }
+
+    void restore(State state, RemoteConnection current) {
+        directory = state.directory;
+        directoryEndpoint = state.directoryEndpoint;
+        directoryUsername = state.directoryUsername;
+        pendingFavorite = state.pendingFavorite;
+        shelfName = state.shelfName;
+        shelfPreview = state.shelfPreview;
+        shellExited = state.shellExited;
+        reconnectRequired = state.reconnectRequired;
+        connection = state.hadConnection ? current : null;
+        placeholder.setVisibility(state.placeholderVisible ? View.VISIBLE : View.GONE);
+
+        WorkspaceTerminal live = current == null ? null : workspace.terminal(id);
+        if (live != null) bindRun(live, state.topRow);
+        if (state.browser != null) {
+            createBrowser();
+            browser.restore(state.browser);
+            browser.setVisibility(state.showingBrowser ? View.VISIBLE : View.GONE);
+            terminal.setVisibility(state.showingBrowser ? View.GONE : View.VISIBLE);
+            showingBrowser = state.showingBrowser;
+        }
+        if (live != null && live.end() != null) {
+            showTerminalEnd(live.end());
+        } else if (state.hadConnection && current == null && !shellExited) {
+            reconnectRequired = !directory.isEmpty();
+            setStatus(R.string.workspace_ssh_disconnected, reconnectRequired);
+        } else if (state.statusMessage != null) {
+            setStatus(state.statusMessage, state.statusVisible);
+        }
+        updatePlaceholder();
+    }
+
+    void releaseView() {
+        disposed = true;
+        ++openRequest;
+        openingTerminal = false;
+        main.removeCallbacks(flushResize);
+        if (run != null) run.detachListener(terminalListener);
+        run = null;
+        clearBrowser();
+        terminal.releaseSession();
+        shelfPreview = null;
     }
 
     void dispose() {
-        shelfPreview = null;
-        disposed = true;
         detach();
-        output.shutdownNow();
+        releaseView();
     }
 
-    private interface TerminalOperation {
-        void run() throws IOException;
-    }
+    static final class State {
+        final String directory;
+        final String directoryEndpoint;
+        final String directoryUsername;
+        final String shelfName;
+        final FavoriteLayouts.Directory pendingFavorite;
+        final Bitmap shelfPreview;
+        final boolean shellExited;
+        final boolean reconnectRequired;
+        final boolean hadConnection;
+        final boolean placeholderVisible;
+        final boolean showingBrowser;
+        final boolean statusVisible;
+        final int topRow;
+        final Function<Context, String> statusMessage;
+        final RemoteBrowserView.State browser;
 
-    private static final class TerminalRun {
-        final RemoteConnection.Terminal channel;
-        Future<?> reader;
-
-        TerminalRun(RemoteConnection.Terminal channel) {
-            this.channel = channel;
+        State(WorkspacePane pane) {
+            directory = pane.directory;
+            directoryEndpoint = pane.directoryEndpoint;
+            directoryUsername = pane.directoryUsername;
+            shelfName = pane.shelfName;
+            pendingFavorite = pane.pendingFavorite;
+            shelfPreview = pane.shelfPreview;
+            shellExited = pane.shellExited;
+            reconnectRequired = pane.reconnectRequired;
+            hadConnection = pane.connection != null;
+            placeholderVisible = pane.placeholder.getVisibility() == View.VISIBLE;
+            showingBrowser = pane.showingBrowser;
+            statusVisible = !pane.openingTerminal && pane.status.getVisibility() == View.VISIBLE;
+            topRow = pane.terminal.getTopRow();
+            statusMessage = pane.openingTerminal ? null : pane.statusMessage;
+            browser = pane.browser == null ? null : pane.browser.snapshot();
         }
     }
 }
